@@ -1,8 +1,12 @@
-name: Build Windows EXE
+name: Build and Release Windows EXE
 
 on:
   push:
     branches: [ "main" ]
+
+# 【核心新增】必须赋予机器人写入权限，它才能帮我们创建发行版
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -25,8 +29,12 @@ jobs:
     - name: Build with PyInstaller
       run: pyinstaller -F -w main.py
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
+    # 【核心新增】打包完成后，自动创建 Release 并上传 EXE
+    - name: Create Release and Upload Asset
+      uses: softprops/action-gh-release@v2
       with:
-        name: AutoClicker_Windows
-        path: dist/main.exe
+        # 使用每次运行的流水号作为独一无二的版本号，防止冲突
+        tag_name: build-${{ github.run_number }}
+        name: "自动点击器 V1.1 (构建号: ${{ github.run_number }})"
+        body: "这是由 GitHub Actions 全自动打包的最新 Windows 执行文件。"
+        files: dist/main.exe
