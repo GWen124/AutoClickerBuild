@@ -1,6 +1,0 @@
-PyQt5
-opencv-python
-numpy
-pynput
-pywin32
-Pillow
