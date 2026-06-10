@@ -51,7 +51,6 @@ class AutoClickerApp(QMainWindow):
     screenshot_closed = pyqtSignal()
 
     def get_base_path(self):
-        """获取应用程序的运行目录（兼容源码运行和打包成exe后的运行）"""
         if getattr(sys, 'frozen', False):
             return os.path.dirname(sys.executable)
         else:
@@ -59,8 +58,8 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("自动点击工具（图片识别与坐标点击）V1.1 - 修复版")
-        # 【修复1】设置最小尺寸和默认尺寸，防止挤压
+        self.base_title = "自动点击工具（图片识别与坐标点击）V1.2"
+        self.setWindowTitle(self.base_title)
         self.setMinimumSize(1000, 700)
         self.resize(1200, 800)
 
@@ -72,7 +71,6 @@ class AutoClickerApp(QMainWindow):
         self.is_selecting_window = False
         self.is_adding_image = False
         
-        # 【修复2】兼容 exe 打包的路径获取
         self.base_dir = self.get_base_path()
         self.screenshot_dir = os.path.join(self.base_dir, "screenshots")
         os.makedirs(self.screenshot_dir, exist_ok=True)
@@ -113,7 +111,6 @@ class AutoClickerApp(QMainWindow):
         left_widget = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setSpacing(10)
-        # 【修复3】解除左侧控制面板的宽度限制
         left_widget.setMinimumWidth(320)
 
         control_group = QGroupBox("流程控制")
@@ -181,7 +178,7 @@ class AutoClickerApp(QMainWindow):
         loop_group.setLayout(loop_layout)
         left_layout.addWidget(loop_group)
 
-        offset_group = QGroupBox("偏移设置（X轴和Y轴点击偏移量）")
+        offset_group = QGroupBox("偏移设置")
         offset_layout = QVBoxLayout()
         self.offset_checkbox = QCheckBox("启用偏移")
         self.offset_checkbox.setChecked(False)
@@ -204,7 +201,7 @@ class AutoClickerApp(QMainWindow):
         offset_group.setLayout(offset_layout)
         left_layout.addWidget(offset_group)
 
-        random_delay_group = QGroupBox("启动随机延迟（1秒等于1000毫秒）")
+        random_delay_group = QGroupBox("启动随机延迟")
         random_delay_layout = QVBoxLayout()
         self.random_delay_checkbox = QCheckBox("启动随机延迟")
         self.random_delay_checkbox.setChecked(False)
@@ -300,7 +297,6 @@ class AutoClickerApp(QMainWindow):
         ])
 
         header = self.steps_table.horizontalHeader()
-        # 【修复4】优化表格列宽分配策略，防止挤压
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -309,16 +305,10 @@ class AutoClickerApp(QMainWindow):
         self.steps_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.steps_table.setAlternatingRowColors(True)
         self.steps_table.setStyleSheet("""
-            QTableWidget {
-                gridline-color: #ddd; font-size: 11px;
-                border: 1px solid #ccc; border-radius: 3px;
-            }
+            QTableWidget { gridline-color: #ddd; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; }
             QTableWidget::item { padding: 6px 4px; min-height: 20px; text-align: center; }
             QTableWidget::item:selected { background-color: #e3f2fd; }
-            QHeaderView::section {
-                background-color: #f0f0f0; padding: 6px;
-                border: 1px solid #ddd; font-weight: bold; text-align: center;
-            }
+            QHeaderView::section { background-color: #f0f0f0; padding: 6px; border: 1px solid #ddd; font-weight: bold; text-align: center; }
         """)
         self.steps_table.verticalHeader().setDefaultSectionSize(35)
         self.steps_table.verticalHeader().setVisible(False)
@@ -330,7 +320,6 @@ class AutoClickerApp(QMainWindow):
 
         main_splitter.addWidget(left_widget)
         main_splitter.addWidget(right_widget)
-        # 【修复5】调整分割条初始比例
         main_splitter.setSizes([320, 880])
 
         main_layout.addWidget(main_splitter)
@@ -501,7 +490,7 @@ class AutoClickerApp(QMainWindow):
 
     def on_coordinate_captured(self, x, y):
         rel_x, rel_y = x, y
-        if self.target_hwnd:
+        if self.target_hwnd and win32gui.IsWindow(self.target_hwnd):
             left, top, _, _ = win32gui.GetWindowRect(self.target_hwnd)
             rel_x -= left
             rel_y -= top
@@ -616,7 +605,7 @@ class AutoClickerApp(QMainWindow):
         self.steps_table.selectRow(step_index)
 
     def on_image_captured(self, image_path):
-        if self.target_hwnd:
+        if self.target_hwnd and win32gui.IsWindow(self.target_hwnd):
             left, top, right, bottom = win32gui.GetWindowRect(self.target_hwnd)
             bbox = (left, top, right, bottom)
             screen_image = ImageGrab.grab(bbox)
@@ -653,8 +642,11 @@ class AutoClickerApp(QMainWindow):
             self.steps_table.selectRow(current_row + 1)
 
     def update_steps_table(self):
+        # 【核心修复1】重构列表刷新机制，彻底屏蔽底层由于UI重绘引发的信号回流Bug
         self.steps_table.setRowCount(len(self.steps))
         for i, step in enumerate(self.steps):
+            self.steps_table.blockSignals(True)
+            
             step_item = QTableWidgetItem(f"{i + 1}")
             step_item.setTextAlignment(Qt.AlignCenter)
             self.steps_table.setItem(i, 0, step_item)
@@ -664,24 +656,33 @@ class AutoClickerApp(QMainWindow):
             self.steps_table.setItem(i, 1, type_item)
 
             click_combo = QComboBox()
+            click_combo.blockSignals(True) # 初始化前强制锁定信号
             click_combo.addItems(["左键单击", "右键单击", "双击", "跳转"])
-            click_combo.setCurrentIndex(0 if step.click_type == 'left' else 1 if step.click_type == 'right' else 2 if step.click_type == 'double' else 3)
+            if step.click_type == 'left': click_combo.setCurrentIndex(0)
+            elif step.click_type == 'right': click_combo.setCurrentIndex(1)
+            elif step.click_type == 'double': click_combo.setCurrentIndex(2)
+            elif step.click_type == 'jump': click_combo.setCurrentIndex(3)
             click_combo.currentTextChanged.connect(lambda text, row=i: self.update_step_click_type(row, text))
+            click_combo.blockSignals(False) # 解锁
             self.steps_table.setCellWidget(i, 2, click_combo)
 
             wait_spin = QSpinBox()
+            wait_spin.blockSignals(True)
             wait_spin.setRange(0, 3600000)
             wait_spin.setValue(step.wait_time)
             wait_spin.valueChanged.connect(lambda value, row=i: self.update_step_wait_time(row, value))
+            wait_spin.blockSignals(False)
             self.steps_table.setCellWidget(i, 3, wait_spin)
 
             if step.step_type == 'image':
                 similarity_spin = QDoubleSpinBox()
+                similarity_spin.blockSignals(True)
                 similarity_spin.setRange(0.1, 1.0)
                 similarity_spin.setSingleStep(0.05)
                 similarity_spin.setValue(step.similarity)
                 similarity_spin.setDecimals(2)
                 similarity_spin.valueChanged.connect(lambda value, row=i: self.update_step_similarity(row, value))
+                similarity_spin.blockSignals(False)
                 self.steps_table.setCellWidget(i, 4, similarity_spin)
             else:
                 similarity_item = QTableWidgetItem("-")
@@ -689,18 +690,23 @@ class AutoClickerApp(QMainWindow):
                 self.steps_table.setItem(i, 4, similarity_item)
 
             offset_checkbox = QCheckBox()
+            offset_checkbox.blockSignals(True)
             offset_checkbox.setStyleSheet("QCheckBox { margin-left: auto; margin-right: auto; }")
             offset_checkbox.setChecked(step.accept_offset)
             offset_checkbox.stateChanged.connect(lambda state, row=i: self.update_step_accept_offset(row, state))
+            offset_checkbox.blockSignals(False)
             self.steps_table.setCellWidget(i, 5, offset_checkbox)
 
             random_delay_checkbox = QCheckBox()
+            random_delay_checkbox.blockSignals(True)
             random_delay_checkbox.setStyleSheet("QCheckBox { margin-left: auto; margin-right: auto; }")
             random_delay_checkbox.setChecked(step.accept_random_delay)
             random_delay_checkbox.stateChanged.connect(lambda state, row=i: self.update_step_accept_random_delay(row, state))
+            random_delay_checkbox.blockSignals(False)
             self.steps_table.setCellWidget(i, 6, random_delay_checkbox)
 
             jump_combo = QComboBox()
+            jump_combo.blockSignals(True)
             jump_combo.addItem("无跳转", -1)
             for j in range(len(self.steps)):
                 jump_combo.addItem(f"步骤 {j + 1}", j)
@@ -708,15 +714,19 @@ class AutoClickerApp(QMainWindow):
                 jump_combo.setCurrentIndex(step.jump_to + 1)
             jump_combo.currentIndexChanged.connect(lambda index, row=i: self.update_step_jump_to(row, index))
             
+            # 【核心修复2】修复原作者代码中强制抹除坐标点击类型的固有Bug
             if step.step_type == 'image' and step.click_type == 'jump':
                 jump_combo.setEnabled(True)
             else:
                 jump_combo.setEnabled(False)
                 jump_combo.setCurrentIndex(0)
-                if step.step_type == 'coordinate':
+                if step.step_type == 'coordinate' and step.click_type == 'jump':
                     step.click_type = 'left'
                     step.jump_to = None
+            
+            jump_combo.blockSignals(False)
             self.steps_table.setCellWidget(i, 7, jump_combo)
+            self.steps_table.blockSignals(False)
 
     def update_step_jump_to(self, row, index):
         if row < len(self.steps):
@@ -791,6 +801,9 @@ class AutoClickerApp(QMainWindow):
             config["steps"].append(step_data)
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+            
+        # 【功能新增】保存后在软件标题栏同步显示配置名称
+        self.setWindowTitle(f"{self.base_title} - [{os.path.basename(file_path)}]")
         QMessageBox.information(self, "成功", "配置保存成功！")
 
     def load_config(self):
@@ -839,6 +852,9 @@ class AutoClickerApp(QMainWindow):
         self.random_delay_max_spin.setValue(config.get("random_delay_max", 1000))
         self.toggle_random_delay(Qt.Checked if random_delay_enabled else Qt.Unchecked)
         self.update_steps_table()
+        
+        # 【功能新增】加载后在软件标题栏同步显示配置名称
+        self.setWindowTitle(f"{self.base_title} - [{os.path.basename(file_path)}]")
         QMessageBox.information(self, "成功", "配置加载成功！")
 
     def closeEvent(self, event):
@@ -948,6 +964,11 @@ class ExecutionThread(QThread):
                     while self.is_paused and not self.is_stopped: time.sleep(0.1)
                     if self.is_stopped or self.current_step_index >= len(self.parent.steps): break
                     
+                    if self.parent.target_hwnd and not win32gui.IsWindow(self.parent.target_hwnd):
+                        self.error.emit("目标窗口已失效或关闭！已停止执行。")
+                        self.stop()
+                        break
+
                     step = self.parent.steps[self.current_step_index]
                     target_pos = None
                     if step.step_type == 'image':
@@ -987,9 +1008,9 @@ class ExecutionThread(QThread):
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))
+            self.stop()
 
     def _sleep_interruptible(self, seconds):
-        """【修复6】可随时被中断的睡眠，防止点击停止后仍卡住"""
         iterations = int(seconds * 10)
         for _ in range(iterations):
             if self.is_stopped: break
@@ -1034,9 +1055,15 @@ class ExecutionThread(QThread):
         if step.accept_offset and self.parent.offset_checkbox.isChecked():
             x += random.randint(-self.parent.offset_x_spin.value(), self.parent.offset_x_spin.value())
             y += random.randint(-self.parent.offset_y_spin.value(), self.parent.offset_y_spin.value())
+            
         if self.parent.target_hwnd:
-            left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
-            rel_x, rel_y = x - left, y - top
+            try:
+                client_point = win32gui.ScreenToClient(self.parent.target_hwnd, (int(x), int(y)))
+                rel_x, rel_y = client_point[0], client_point[1]
+            except Exception as e:
+                print(f"坐标转换失败，可能是窗口已失效: {e}")
+                return
+
             if step.click_type == 'left': down_msg, up_msg = win32con.WM_LBUTTONDOWN, win32con.WM_LBUTTONUP
             elif step.click_type == 'right': down_msg, up_msg = win32con.WM_RBUTTONDOWN, win32con.WM_RBUTTONUP
             elif step.click_type == 'double':
@@ -1058,12 +1085,11 @@ class ExecutionThread(QThread):
 
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         lparam = win32api.MAKELONG(x, y)
-        win32gui.SendMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-        time.sleep(0.01)
-        win32gui.SendMessage(hwnd, up_msg, 0, lparam)
+        win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
+        time.sleep(0.02)
+        win32gui.PostMessage(hwnd, up_msg, 0, lparam)
 
 if __name__ == "__main__":
-    # 【修复7】启用高 DPI 缩放支持
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
