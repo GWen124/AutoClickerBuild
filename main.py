@@ -1085,9 +1085,24 @@ class ExecutionThread(QThread):
 
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         lparam = win32api.MAKELONG(x, y)
+        
+        # 1. 治标治本：先发送“鼠标移动”消息，让游戏引擎激活按钮的 Hover 悬停状态
+        win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
+        time.sleep(0.02) # 给游戏引擎1-2帧的时间去渲染按钮高亮
+        
+        # 2. 发送鼠标按下
         win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-        time.sleep(0.02)
+        
+        # 3. 核心修复：拉长按下和抬起之间的间隔，防止被游戏吃掉抬起信号（幽灵长按）
+        # 0.05 秒（50毫秒）对人类来说感觉不到，但对游戏引擎来说足够处理完两帧了
+        time.sleep(0.05) 
+        
+        # 4. 发送鼠标抬起
         win32gui.PostMessage(hwnd, up_msg, 0, lparam)
+        
+        # 5. 善后处理：点击完后再次发送移动消息，确保UI状态机闭环
+        time.sleep(0.01)
+        win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
 
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
