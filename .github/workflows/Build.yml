@@ -31,16 +31,17 @@ jobs:
     - name: Build with PyInstaller
       run: pyinstaller -F -w main.py
 
-    # 【新增功能】将生成的 main.exe 重命名为：自动点击工具_Build构建号.exe
+    # 【核心修改】在这里指定您想要的中文名字和版本号
     - name: Rename Executable
       shell: pwsh
       run: |
-        Rename-Item -Path "dist\main.exe" -NewName "AutoClicker_Build${{ github.run_number }}.exe"
+        Rename-Item -Path "dist\main.exe" -NewName "自动点击工具_V1.4.exe"
 
     - name: Create Release and Upload Asset
       uses: softprops/action-gh-release@v2
       with:
         tag_name: build-${{ github.run_number }}
-        name: "自动点击器 (自动构建版本: ${{ github.run_number }})"
-        body: "这是由 GitHub Actions 全自动打包的最新 Windows 执行文件。文件已自动附加版本号。"
-        files: dist/AutoClicker_Build${{ github.run_number }}.exe
+        name: "自动点击工具 V1.4 (构建号: ${{ github.run_number }})"
+        body: "这是由 GitHub Actions 全自动打包的最新 Windows 执行文件。"
+        # 【核心修改】确保这里上传的文件名和上面改的名字完全一致
+        files: dist/自动点击工具_V1.4.exe
