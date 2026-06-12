@@ -63,7 +63,8 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.base_title = "全自动点击工具"
+        # 更新标题栏
+        self.base_title = "自动点击工具 - 强力防按钮卡死版"
         self.setWindowTitle(self.base_title)
         
         self.setMinimumSize(1000, 700)
@@ -552,7 +553,6 @@ class AutoClickerApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
-        
         self.statusBar().showMessage("⏹ 已手动停止执行")
 
     def pause_execution(self):
@@ -562,7 +562,6 @@ class AutoClickerApp(QMainWindow):
             self.execution_thread.pause()
             self.start_btn.setEnabled(True)
             self.pause_btn.setText("▶ 继续执行")
-            
             self.statusBar().showMessage("⏸ 已暂停执行")
             
         elif self.is_paused:
@@ -592,7 +591,6 @@ class AutoClickerApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
-        
         self.statusBar().showMessage("✅ 所有循环执行完成！")
 
     def on_execution_error(self, error_msg):
@@ -604,7 +602,6 @@ class AutoClickerApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
-        
         self.statusBar().showMessage(f"❌ 执行发生错误: {error_msg}")
         QMessageBox.critical(self, "错误", f"执行出错: {error_msg}")
 
@@ -1108,18 +1105,27 @@ class ExecutionThread(QThread):
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         lparam = win32api.MAKELONG(x, y)
         
-        win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-        time.sleep(random.uniform(0.02, 0.05))
-        
-        win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-        
-        time.sleep(random.uniform(0.06, 0.12)) 
-        
-        win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-        
-        time.sleep(random.uniform(0.02, 0.05))
-        away_lparam = win32api.MAKELONG(0, 0)
-        win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, away_lparam)
+        try:
+            # 1. 模拟鼠标移入，激活游戏UI Hover悬停状态
+            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
+            time.sleep(random.uniform(0.02, 0.05))
+            
+            # 2. 发送按下指令
+            win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
+            
+            # 3. 按下后强制停留足够长的时间，坚决防止被游戏吃掉下一帧的抬起信号
+            time.sleep(random.uniform(0.06, 0.12)) 
+            
+            # 4. 发送抬起指令（核心修复：连发两次抬起信号，强行震醒游戏引擎）
+            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
+            time.sleep(0.01)
+            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
+            
+        finally:
+            # 5. 终极保险：无论上述代码是否抛出异常卡死，这句必定执行，强行把鼠标移走解锁按钮
+            time.sleep(random.uniform(0.02, 0.05))
+            away_lparam = win32api.MAKELONG(0, 0)
+            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, away_lparam)
 
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
