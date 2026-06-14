@@ -35,29 +35,27 @@ class Step:
                  click_type='left', wait_time=1000, similarity=0.8,
                  jump_to=None, random_delay_enabled=False, random_delay_min=100, random_delay_max=1000,
                  accept_offset=True, accept_random_delay=True):
-        self.step_type = step_type             # 步骤类型：'image'（图像识别） 或 'coordinate'（坐标点击）
-        self.image_path = image_path           # 图像识别所需的模板图片路径
-        self.x = x                             # 坐标点击的 X 轴位置
-        self.y = y                             # 坐标点击的 Y 轴位置
-        self.click_type = click_type           # 点击方式：'left', 'right', 'double', 'jump'
-        self.wait_time = wait_time             # 执行完此步骤后的基础等待时间（毫秒）
-        self.similarity = similarity           # 图像识别的匹配容错率（0.1~1.0）
-        self.jump_to = jump_to                 # 条件跳转的目标步骤索引（仅图像识别可用）
-        self.random_delay_enabled = random_delay_enabled # 全局开关：是否启用随机延迟
-        self.random_delay_min = random_delay_min         # 随机延迟下限（毫秒）
-        self.random_delay_max = random_delay_max         # 随机延迟上限（毫秒）
-        self.accept_offset = accept_offset               # 步骤级开关：该步骤是否接受坐标防封偏移
-        self.accept_random_delay = accept_random_delay   # 步骤级开关：该步骤是否接受随机延迟
+        self.step_type = step_type             
+        self.image_path = image_path           
+        self.x = x                             
+        self.y = y                             
+        self.click_type = click_type           
+        self.wait_time = wait_time             
+        self.similarity = similarity           
+        self.jump_to = jump_to                 
+        self.random_delay_enabled = random_delay_enabled 
+        self.random_delay_min = random_delay_min         
+        self.random_delay_max = random_delay_max         
+        self.accept_offset = accept_offset               
+        self.accept_random_delay = accept_random_delay   
 
 class AutoClickerApp(QMainWindow):
-    # 定义跨线程通信信号，防止 UI 线程阻塞
     coordinate_captured = pyqtSignal(int, int)
     stop_coordinate_mode = pyqtSignal()
     stop_select_window_mode_signal = pyqtSignal()
     screenshot_closed = pyqtSignal()
 
     def get_base_path(self):
-        # 获取应用程序的运行目录（核心兼容逻辑：兼容源码运行和打包成exe后的运行环境）
         if getattr(sys, 'frozen', False):
             return os.path.dirname(sys.executable)
         else:
@@ -65,14 +63,12 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.base_title = "自动点击工具 V1.6 - 根治拖拽死锁版"
+        self.base_title = "自动点击工具 V1.8 - 终极防死锁版"
         self.setWindowTitle(self.base_title)
         
-        # 界面防挤压处理：设置最小尺寸，防止组件重叠
         self.setMinimumSize(1000, 700)
         self.resize(1200, 800)
 
-        # 核心状态变量初始化
         self.steps = []
         self.current_step_index = 0
         self.is_running = False
@@ -81,7 +77,6 @@ class AutoClickerApp(QMainWindow):
         self.is_selecting_window = False
         self.is_adding_image = False
         
-        # 目录初始化：确保截图文件夹跟随主程序生成
         self.base_dir = self.get_base_path()
         self.screenshot_dir = os.path.join(self.base_dir, "screenshots")
         os.makedirs(self.screenshot_dir, exist_ok=True)
@@ -89,7 +84,7 @@ class AutoClickerApp(QMainWindow):
         self.mouse_listener = None
         self.keyboard_listener = None
         self.global_hotkey_listener = None
-        self.target_hwnd = None # 目标窗口句柄，后台执行的核心凭据
+        self.target_hwnd = None 
 
         self.mouse = MouseController()
         self.keyboard = KeyboardController()
@@ -98,7 +93,6 @@ class AutoClickerApp(QMainWindow):
         self.init_ui()
         self.setup_global_hotkey()
 
-        # 初始化后台执行线程
         self.execution_thread = ExecutionThread(self)
         self.execution_thread.finished.connect(self.on_execution_finished)
         self.execution_thread.error.connect(self.on_execution_error)
@@ -112,7 +106,6 @@ class AutoClickerApp(QMainWindow):
         
         self.statusBar().showMessage("✨ 准备就绪，请添加步骤或加载配置")
 
-    # ---------------- UI 渲染区域 ----------------
     def init_ui(self):
         font = QFont("Microsoft YaHei", 10)
         self.setFont(font)
@@ -126,9 +119,8 @@ class AutoClickerApp(QMainWindow):
         left_widget = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setSpacing(10)
-        left_widget.setMinimumWidth(320) # 保证左侧面板文字不被截断
+        left_widget.setMinimumWidth(320) 
 
-        # 控制台组
         control_group = QGroupBox("流程控制")
         control_layout = QVBoxLayout()
         self.start_btn = QPushButton("▶ 开始执行")
@@ -147,7 +139,6 @@ class AutoClickerApp(QMainWindow):
         control_group.setLayout(control_layout)
         left_layout.addWidget(control_group)
 
-        # 窗口绑定组 (后台运行的基础)
         window_group = QGroupBox("目标窗口设置 (后台执行关键)")
         window_layout = QVBoxLayout()
         self.window_title_edit = QLineEdit()
@@ -163,7 +154,6 @@ class AutoClickerApp(QMainWindow):
         window_group.setLayout(window_layout)
         left_layout.addWidget(window_group)
 
-        # 文件操作组
         file_group = QGroupBox("文件操作")
         file_layout = QHBoxLayout()
         self.save_btn = QPushButton("💾 保存配置")
@@ -175,7 +165,6 @@ class AutoClickerApp(QMainWindow):
         file_group.setLayout(file_layout)
         left_layout.addWidget(file_group)
 
-        # 循环控制组
         loop_group = QGroupBox("循环设置")
         loop_layout = QVBoxLayout()
         self.loop_type_group = QButtonGroup()
@@ -196,7 +185,6 @@ class AutoClickerApp(QMainWindow):
         loop_group.setLayout(loop_layout)
         left_layout.addWidget(loop_group)
 
-        # 坐标防封偏移组
         offset_group = QGroupBox("偏移设置")
         offset_layout = QVBoxLayout()
         self.offset_checkbox = QCheckBox("启用偏移")
@@ -220,7 +208,6 @@ class AutoClickerApp(QMainWindow):
         offset_group.setLayout(offset_layout)
         left_layout.addWidget(offset_group)
 
-        # 随机延迟防封组
         random_delay_group = QGroupBox("启动随机延迟")
         random_delay_layout = QVBoxLayout()
         self.random_delay_checkbox = QCheckBox("启动随机延迟")
@@ -244,7 +231,6 @@ class AutoClickerApp(QMainWindow):
         random_delay_group.setLayout(random_delay_layout)
         left_layout.addWidget(random_delay_group)
 
-        # 全局热键组
         hotkey_group = QGroupBox("热键设置")
         hotkey_layout = QVBoxLayout()
         self.hotkey_preset = QComboBox()
@@ -258,7 +244,6 @@ class AutoClickerApp(QMainWindow):
         left_layout.addStretch()
         left_widget.setLayout(left_layout)
 
-        # 右侧预览与步骤列表区域
         right_widget = QWidget()
         right_layout = QVBoxLayout()
         right_layout.setSpacing(10)
@@ -306,7 +291,6 @@ class AutoClickerApp(QMainWindow):
         self.steps_table.setColumnCount(8)
         self.steps_table.setHorizontalHeaderLabels(["步骤", "类型", "点击类型", "等待（毫秒）", "相似度", "接受偏移", "接受随机延迟", "跳转设置"])
 
-        # 优化列宽策略，防止挤压
         header = self.steps_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -336,7 +320,6 @@ class AutoClickerApp(QMainWindow):
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
 
-    # ---------------- 窗口选择与坐标拾取逻辑 ----------------
     def clear_target_window(self):
         self.target_hwnd = None
         self.window_title_edit.clear()
@@ -520,7 +503,6 @@ class AutoClickerApp(QMainWindow):
     def get_loop_count(self):
         return 999999 if self.radio_infinite.isChecked() else self.loop_spin.value()
 
-    # ---------------- 线程与执行控制及状态栏更新 ----------------
     def start_execution(self):
         if not self.steps:
             QMessageBox.warning(self, "错误", "没有可执行的步骤")
@@ -636,7 +618,6 @@ class AutoClickerApp(QMainWindow):
         self.steps.append(step)
         self.update_steps_table()
 
-    # ---------------- 步骤列表的增删改 ----------------
     def delete_step(self):
         current_row = self.steps_table.currentRow()
         if current_row >= 0:
@@ -874,9 +855,6 @@ class AutoClickerApp(QMainWindow):
         if self.keyboard_listener: self.keyboard_listener.stop()
         event.accept()
 
-# ==========================================
-# 截图遮罩层窗口 (添加图像用)
-# ==========================================
 class ScreenshotWindow(QWidget):
     image_captured = pyqtSignal(str)
     closed = pyqtSignal()
@@ -977,7 +955,6 @@ class ExecutionThread(QThread):
                 return
             while (self.current_loop < self.loop_count or self.loop_count == 999999) and not self.is_stopped:
                 self.current_loop += 1
-                
                 self.loop_updated.emit(self.current_loop, self.loop_count)
                 
                 while self.current_step_index < len(self.parent.steps) and not self.is_stopped:
@@ -1109,36 +1086,34 @@ class ExecutionThread(QThread):
                 self.parent.mouse.click(Button.left)
 
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
-        # 【防卡死终极修复1】：每次点击前，先发送 Windows UI 状态取消指令，强行释放之前可能卡死的按钮状态
-        win32gui.PostMessage(hwnd, 0x001F, 0, 0) # 0x001F 即 WM_CANCELMODE
-        time.sleep(0.01)
-
+        # 确保坐标非负
+        x = max(0, int(x))
+        y = max(0, int(y))
         lparam = win32api.MAKELONG(x, y)
+
+        # 【防卡死终极手段1】：激活目标窗口响应状态，防止游戏窗口因处于“后台非激活”状态导致引擎吞消息
+        win32gui.PostMessage(hwnd, win32con.WM_ACTIVATE, win32con.WA_ACTIVE, 0)
         
-        try:
-            # 1. 模拟鼠标移入，激活游戏UI Hover悬停状态
-            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-            time.sleep(random.uniform(0.02, 0.05))
-            
-            # 2. 发送按下指令
-            win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-            
-            # 3. 按下后强制停留足够长的时间，坚决防止被游戏吃掉下一帧的抬起信号
-            time.sleep(random.uniform(0.06, 0.12)) 
-            
-            # 4. 发送抬起指令
-            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            
-            # 5. 再次发送抬起指令，双重保险轰炸
-            time.sleep(0.01)
-            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            
-        finally:
-            # 【核心删除】：删除了原先把鼠标移到 (0,0) 的致命操作，改为原地微动 1 像素解除悬停状态
-            jitter_lparam = win32api.MAKELONG(x + 1, y + 1)
-            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, jitter_lparam)
-            # 再次强行发送 UI 状态复位指令作为托底
-            win32gui.PostMessage(hwnd, 0x001F, 0, 0)
+        # 1. 模拟鼠标移入，防封并激活游戏UI悬停判定
+        win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
+        
+        # 极短延迟 (防止引擎把紧接着的 Down 指令和上一帧真实的外部物理鼠标坐标混合运算出"拖拽"轨迹)
+        time.sleep(0.01)
+        
+        # 2. 发送按下
+        win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
+        
+        # 极短延迟 (只要大于引擎每帧的处理时间即可，无需过长)
+        time.sleep(0.01) 
+        
+        # 3. 发送抬起
+        win32gui.PostMessage(hwnd, up_msg, 0, lparam)
+        
+        # 【防卡死终极手段2】：强行核弹级复位
+        # 无论游戏内部的 EventSystem 把刚才那次点击处理成了什么鬼样子(拖拽、长按、双击)，
+        # 我们直接使用 WM_CAPTURECHANGED 和 WM_CANCELMODE 强行把游戏 UI 的鼠标捕获状态和点击残余状态彻底清空！
+        win32gui.PostMessage(hwnd, win32con.WM_CAPTURECHANGED, 0, hwnd)
+        win32gui.PostMessage(hwnd, 0x001F, 0, 0) # 0x001F 即 WM_CANCELMODE
 
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
