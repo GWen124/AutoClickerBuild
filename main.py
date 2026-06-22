@@ -61,7 +61,7 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.base_title = "自动点击工具 V1.2 - 周期多开全能版"
+        self.base_title = "自动点击工具 V1.3 - 完美循环修复版"
         self.setWindowTitle(self.base_title)
         self.setMinimumSize(1000, 750)
         self.resize(1200, 850)
@@ -118,7 +118,7 @@ class AutoClickerApp(QMainWindow):
         left_widget = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setSpacing(10)
-        left_widget.setMinimumWidth(350) # 进一步加宽保证左侧文字绝对不换行不挤压
+        left_widget.setMinimumWidth(350) 
 
         # 1. 流程控制组
         control_group = QGroupBox("流程控制")
@@ -168,7 +168,7 @@ class AutoClickerApp(QMainWindow):
         file_group.setLayout(file_layout)
         left_layout.addWidget(file_group)
 
-        # =================【终极排版：循环与周期调度中心】=================
+        # =================【循环与调度中心】=================
         loop_group = QGroupBox("循环与调度策略 (暂停时可修改)")
         lt_layout = QGridLayout()
         lt_layout.setSpacing(8)
@@ -361,7 +361,7 @@ class AutoClickerApp(QMainWindow):
         controls = [
             self.radio_infinite, self.radio_count, self.loop_spin,
             self.timer_start_checkbox, self.timer_start_edit,
-            self.timer_interval_checkbox, self.timer_interval_spin, # 新增
+            self.timer_interval_checkbox, self.timer_interval_spin, 
             self.timer_stop_checkbox, self.timer_stop_spin,
             self.offset_checkbox, self.offset_x_spin, self.offset_y_spin,
             self.hotkey_preset, self.steps_table, self.add_image_btn,
@@ -560,7 +560,7 @@ class AutoClickerApp(QMainWindow):
             self.is_paused = False
             self.is_running = True
             
-            # 【动态同步】：恢复执行时，将面板上最新的设定灌入底层线程
+            # 【动态同步】
             self.execution_thread.loop_count = self.get_loop_count()
             self.execution_thread.timer_stop_enabled = self.timer_stop_checkbox.isChecked()
             self.execution_thread.timer_stop_minutes = self.timer_stop_spin.value()
@@ -586,7 +586,6 @@ class AutoClickerApp(QMainWindow):
             self.is_running = True
             self.is_paused = False
             loop_count = self.get_loop_count()
-            
             self.execution_thread.set_params(
                 loop_count, self.current_step_index, 
                 timer_start_enabled, timer_start_time, 
@@ -622,7 +621,6 @@ class AutoClickerApp(QMainWindow):
             self.pause_btn.setText("▶ 继续执行")
             self.statusBar().showMessage("⏸ 任务已暂停 (支持动态修改上方【循环/周期/停止】等策略)")
             
-            # 解锁所有循环调度相关的控件，允许在暂停时“换挡”
             self.radio_infinite.setEnabled(True)
             self.radio_count.setEnabled(True)
             self.loop_spin.setEnabled(True)
@@ -644,6 +642,7 @@ class AutoClickerApp(QMainWindow):
     def on_waiting_update(self, countdown_str):
         self.statusBar().showMessage(f"⏳ {countdown_str}")
 
+    # 【重要视觉 Bug 修复】：确保任务完成后，状态栏完美显示成功信息
     def on_execution_finished(self):
         self.is_running = False
         self.is_paused = False
@@ -653,6 +652,7 @@ class AutoClickerApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
+        self.statusBar().showMessage("✅ 任务已彻底完成或到达定时设定，完美结束！")
 
     def on_info_msg(self, msg):
         self.statusBar().showMessage(f"✅ {msg}")
@@ -670,10 +670,16 @@ class AutoClickerApp(QMainWindow):
         self.statusBar().showMessage(f"❌ 发生错误: {error_msg}")
         QMessageBox.critical(self, "错误", f"执行出错: {error_msg}")
 
+    # 【核心视觉修复】：防止显示 104/103 导致越界
     def on_step_completed(self, step_index):
         self.current_step_index = step_index
-        self.steps_table.selectRow(step_index)
-        self.statusBar().showMessage(f"▶ 正在执行... (当前步骤: {step_index + 1}/{len(self.steps)})")
+        total_steps = len(self.steps)
+        if step_index < total_steps:
+            self.steps_table.selectRow(step_index)
+            self.statusBar().showMessage(f"▶ 正在执行... (当前步骤: {step_index + 1}/{total_steps})")
+        else:
+            self.steps_table.clearSelection()
+            self.statusBar().showMessage("▶ 本轮所有步骤执行完毕，准备后续操作...")
 
     def delete_step(self):
         current_row = self.steps_table.currentRow()
@@ -771,7 +777,7 @@ class AutoClickerApp(QMainWindow):
             else:
                 jump_combo.setEnabled(False)
                 jump_combo.setCurrentIndex(0)
-                if step.step_type == 'coordinate':
+                if step.step_type == 'coordinate' and step.click_type == 'jump':
                     step.click_type = 'left'
                     step.jump_to = None
             jump_combo.blockSignals(False)
@@ -1080,7 +1086,6 @@ class ExecutionThread(QThread):
     def resume(self):
         self.is_paused = False
         if self.actual_start_time > 0:
-            # 补偿暂停期间流失的时间，防止倒计时被意外吞噬
             self.actual_start_time += (time.time() - self.pause_start_time)
 
     def run(self):
@@ -1089,7 +1094,6 @@ class ExecutionThread(QThread):
                 self.finished.emit()
                 return
 
-            # =================【1. 每天定时启动检测】=================
             if self.timer_start_enabled:
                 now = datetime.datetime.now()
                 target_time = QTime.fromString(self.timer_start_time_str, "HH:mm:ss")
@@ -1115,19 +1119,15 @@ class ExecutionThread(QThread):
                 if self.is_stopped:
                     self.finished.emit()
                     return
-            # =========================================================
 
             self.actual_start_time = time.time()
 
-            # 外层死循环：接管“间隔启动”的无限流转
             while not self.is_stopped:
                 
-                # 记录本轮大任务(Job)的起跑点，供“间隔启动”使用
                 job_start_time = time.time()
                 self.current_loop = 0 
                 self.current_step_index = 0
 
-                # =================【2. 核心工作循环】=================
                 while (self.current_loop < self.loop_count or self.loop_count == 999999) and not self.is_stopped:
                     
                     if self.timer_stop_enabled:
@@ -1167,6 +1167,7 @@ class ExecutionThread(QThread):
                         if step.step_type == 'image' and step.click_type == 'jump':
                             if target_pos is not None and step.jump_to is not None:
                                 self.current_step_index = step.jump_to
+                                # 这里不再发送 104/103 导致的越界，交由主循环增加
                                 self.step_completed.emit(self.current_step_index)
                                 self._sleep_interruptible(total_wait / 1000.0)
                                 continue
@@ -1180,16 +1181,13 @@ class ExecutionThread(QThread):
                             self.current_step_index += 1
 
                         self.step_completed.emit(self.current_step_index)
-                # ====================================================
-                
-                # 如果是被人为停止或达到了总时长上限，立刻跳出整个外层挂机流
+
                 if self.is_stopped: break
 
-                # =================【3. 间隔挂机等待逻辑】=================
+                # =================【【核心修复区】间隔挂机等待逻辑】=================
                 if self.timer_interval_enabled:
                     while not self.is_stopped:
                         
-                        # 同步检查：在漫长的等待期间，如果触发了彻底停止保护，直接切断
                         if self.timer_stop_enabled:
                             elapsed_total = (time.time() - self.actual_start_time) / 60.0
                             if elapsed_total >= self.timer_stop_minutes:
@@ -1197,19 +1195,17 @@ class ExecutionThread(QThread):
                                 self.stop()
                                 break
                                 
-                        # 暂停时冻结时间
                         while self.is_paused and not self.is_stopped:
                             time.sleep(0.1)
                             
                         if self.is_stopped: break
                             
                         now = time.time()
-                        # 当前周期已流失的时间 = 现在时间 - 本次Job开始的时间
                         elapsed = now - job_start_time 
                         remaining = (self.timer_interval_minutes * 60) - elapsed
                         
                         if remaining <= 0:
-                            break # 时间到，开启下一轮大 Job!
+                            break 
                             
                         hours, rem = divmod(int(remaining), 3600)
                         minutes, seconds = divmod(rem, 60)
@@ -1217,7 +1213,7 @@ class ExecutionThread(QThread):
                         self.waiting_update.emit(countdown_str)
                         self._sleep_interruptible(1.0)
                 else:
-                    # 如果没有开启间隔挂机，本轮循环打完就光荣退休
+                    # 【逻辑修复】：如果不启用周期启动，说明用户就是单纯想打完就结束
                     break
                 # ====================================================
 
@@ -1303,6 +1299,7 @@ class ExecutionThread(QThread):
                 self.parent.mouse.click(Button.left)
 
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
+        # V1.1 纯净回退版：最原始的 SendMessage
         lparam = win32api.MAKELONG(x, y)
         win32gui.SendMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
         time.sleep(0.01)
