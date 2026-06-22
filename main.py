@@ -61,10 +61,10 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.base_title = "自动点击工具 V1.1 - 定时多开与动态修改版"
+        self.base_title = "自动点击工具 V1.2 - 周期多开全能版"
         self.setWindowTitle(self.base_title)
-        self.setMinimumSize(1000, 700)
-        self.resize(1200, 800)
+        self.setMinimumSize(1000, 750)
+        self.resize(1200, 850)
 
         self.steps = []
         self.current_step_index = 0
@@ -102,7 +102,7 @@ class AutoClickerApp(QMainWindow):
         self.stop_select_window_mode_signal.connect(self.stop_select_window_mode)
         self.screenshot_closed.connect(self.on_screenshot_closed)
         
-        self.statusBar().showMessage("✨ 准备就绪，支持多开并允许在暂停时修改执行策略")
+        self.statusBar().showMessage("✨ 准备就绪，支持无限多开及周期性挂机任务")
 
     def init_ui(self):
         font = QFont("Microsoft YaHei", 10)
@@ -118,7 +118,7 @@ class AutoClickerApp(QMainWindow):
         left_widget = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setSpacing(10)
-        left_widget.setMinimumWidth(340) # 稍微加宽一点保证网格不拥挤
+        left_widget.setMinimumWidth(350) # 进一步加宽保证左侧文字绝对不换行不挤压
 
         # 1. 流程控制组
         control_group = QGroupBox("流程控制")
@@ -168,8 +168,8 @@ class AutoClickerApp(QMainWindow):
         file_group.setLayout(file_layout)
         left_layout.addWidget(file_group)
 
-        # =================【重点重构：网格排版的循环与定时设置】=================
-        loop_group = QGroupBox("循环与定时策略 (暂停时可修改)")
+        # =================【终极排版：循环与周期调度中心】=================
+        loop_group = QGroupBox("循环与调度策略 (暂停时可修改)")
         lt_layout = QGridLayout()
         lt_layout.setSpacing(8)
         
@@ -183,15 +183,15 @@ class AutoClickerApp(QMainWindow):
         lt_layout.addWidget(self.radio_infinite, 0, 0)
         lt_layout.addWidget(self.radio_count, 0, 1)
         
-        # Row 1: 循环次数
-        lt_layout.addWidget(QLabel("循环设定次数:"), 1, 0)
+        # Row 1: 单次启动循环的次数
+        lt_layout.addWidget(QLabel("单次运行次数:"), 1, 0)
         self.loop_spin = QSpinBox()
         self.loop_spin.setRange(1, 99999)
-        self.loop_spin.setValue(1000)
+        self.loop_spin.setValue(1)
         lt_layout.addWidget(self.loop_spin, 1, 1)
         
-        # Row 2: 定时启动
-        self.timer_start_checkbox = QCheckBox("定时启动(每天):")
+        # Row 2: 定时启动 (特定时间点)
+        self.timer_start_checkbox = QCheckBox("每天定时启动:")
         self.timer_start_edit = QTimeEdit()
         self.timer_start_edit.setDisplayFormat("HH:mm:ss")
         self.timer_start_edit.setTime(QTime.currentTime())
@@ -200,36 +200,47 @@ class AutoClickerApp(QMainWindow):
         lt_layout.addWidget(self.timer_start_checkbox, 2, 0)
         lt_layout.addWidget(self.timer_start_edit, 2, 1)
 
-        # Row 3: 定时停止
-        self.timer_stop_checkbox = QCheckBox("定时停止(运行后):")
+        # Row 3: 周期启动 (每隔多久)
+        self.timer_interval_checkbox = QCheckBox("周期挂机启动:")
+        self.timer_interval_spin = QSpinBox()
+        self.timer_interval_spin.setRange(1, 99999)
+        self.timer_interval_spin.setValue(60)
+        self.timer_interval_spin.setSuffix(" 分钟/次")
+        self.timer_interval_spin.setEnabled(False)
+        self.timer_interval_checkbox.stateChanged.connect(lambda state: self.timer_interval_spin.setEnabled(state == Qt.Checked))
+        lt_layout.addWidget(self.timer_interval_checkbox, 3, 0)
+        lt_layout.addWidget(self.timer_interval_spin, 3, 1)
+
+        # Row 4: 彻底停止保护
+        self.timer_stop_checkbox = QCheckBox("挂机彻底停止:")
         self.timer_stop_spin = QSpinBox()
         self.timer_stop_spin.setRange(1, 99999)
-        self.timer_stop_spin.setValue(60)
-        self.timer_stop_spin.setSuffix(" 分钟")
+        self.timer_stop_spin.setValue(180)
+        self.timer_stop_spin.setSuffix(" 分钟后")
         self.timer_stop_spin.setEnabled(False)
         self.timer_stop_checkbox.stateChanged.connect(lambda state: self.timer_stop_spin.setEnabled(state == Qt.Checked))
-        lt_layout.addWidget(self.timer_stop_checkbox, 3, 0)
-        lt_layout.addWidget(self.timer_stop_spin, 3, 1)
+        lt_layout.addWidget(self.timer_stop_checkbox, 4, 0)
+        lt_layout.addWidget(self.timer_stop_spin, 4, 1)
         
         loop_group.setLayout(lt_layout)
         left_layout.addWidget(loop_group)
         # =========================================================
 
         # 5. 偏移设置组
-        offset_group = QGroupBox("坐标偏移防封设置")
+        offset_group = QGroupBox("坐标偏移防封")
         offset_layout = QGridLayout()
         self.offset_checkbox = QCheckBox("启用随机偏移")
         self.offset_checkbox.setChecked(False)
         self.offset_checkbox.stateChanged.connect(self.toggle_offset)
         offset_layout.addWidget(self.offset_checkbox, 0, 0, 1, 2)
         
-        offset_layout.addWidget(QLabel("X轴(像):"), 1, 0)
+        offset_layout.addWidget(QLabel("X轴(像素):"), 1, 0)
         self.offset_x_spin = QSpinBox()
         self.offset_x_spin.setRange(0, 50)
         self.offset_x_spin.setValue(5)
         offset_layout.addWidget(self.offset_x_spin, 1, 1)
         
-        offset_layout.addWidget(QLabel("Y轴(像):"), 2, 0)
+        offset_layout.addWidget(QLabel("Y轴(像素):"), 2, 0)
         self.offset_y_spin = QSpinBox()
         self.offset_y_spin.setRange(0, 50)
         self.offset_y_spin.setValue(5)
@@ -335,7 +346,7 @@ class AutoClickerApp(QMainWindow):
 
         main_splitter.addWidget(left_widget)
         main_splitter.addWidget(right_widget)
-        main_splitter.setSizes([340, 860])
+        main_splitter.setSizes([350, 850])
 
         main_layout.addWidget(main_splitter)
         main_widget.setLayout(main_layout)
@@ -350,6 +361,7 @@ class AutoClickerApp(QMainWindow):
         controls = [
             self.radio_infinite, self.radio_count, self.loop_spin,
             self.timer_start_checkbox, self.timer_start_edit,
+            self.timer_interval_checkbox, self.timer_interval_spin, # 新增
             self.timer_stop_checkbox, self.timer_stop_spin,
             self.offset_checkbox, self.offset_x_spin, self.offset_y_spin,
             self.hotkey_preset, self.steps_table, self.add_image_btn,
@@ -517,7 +529,6 @@ class AutoClickerApp(QMainWindow):
         self.offset_y_spin.setEnabled(enabled)
 
     def toggle_random_delay(self, state):
-        # 兼容旧代码遗留逻辑，但此处界面已不再控制全步骤的随机
         pass
 
     def on_hotkey_changed(self, text):
@@ -540,40 +551,50 @@ class AutoClickerApp(QMainWindow):
 
         timer_start_enabled = self.timer_start_checkbox.isChecked()
         timer_start_time = self.timer_start_edit.time().toString("HH:mm:ss")
+        timer_interval_enabled = self.timer_interval_checkbox.isChecked()
+        timer_interval_minutes = self.timer_interval_spin.value()
         timer_stop_enabled = self.timer_stop_checkbox.isChecked()
         timer_stop_minutes = self.timer_stop_spin.value()
 
         if self.is_paused:
-            # =================【暂停后继续的逻辑处理】=================
             self.is_paused = False
             self.is_running = True
             
-            # 在恢复执行时，强行把面板上最新的【循环、定时停止】设置传递给后台！
+            # 【动态同步】：恢复执行时，将面板上最新的设定灌入底层线程
             self.execution_thread.loop_count = self.get_loop_count()
             self.execution_thread.timer_stop_enabled = self.timer_stop_checkbox.isChecked()
             self.execution_thread.timer_stop_minutes = self.timer_stop_spin.value()
+            self.execution_thread.timer_interval_enabled = self.timer_interval_checkbox.isChecked()
+            self.execution_thread.timer_interval_minutes = self.timer_interval_spin.value()
             
             self.execution_thread.resume()
             
-            # 将控件重新锁死
+            # 锁定相关控件
             self.radio_infinite.setEnabled(False)
             self.radio_count.setEnabled(False)
             self.loop_spin.setEnabled(False)
             self.timer_stop_checkbox.setEnabled(False)
             self.timer_stop_spin.setEnabled(False)
+            self.timer_interval_checkbox.setEnabled(False)
+            self.timer_interval_spin.setEnabled(False)
             
             self.start_btn.setEnabled(False)
             self.pause_btn.setText("⏸ 暂停执行")
             self.statusBar().showMessage("▶ 恢复执行...")
-            # =========================================================
         else:
             self.current_step_index = 0
             self.is_running = True
             self.is_paused = False
             loop_count = self.get_loop_count()
-            self.execution_thread.set_params(loop_count, self.current_step_index, timer_start_enabled, timer_start_time, timer_stop_enabled, timer_stop_minutes)
-            self.execution_thread.start()
             
+            self.execution_thread.set_params(
+                loop_count, self.current_step_index, 
+                timer_start_enabled, timer_start_time, 
+                timer_stop_enabled, timer_stop_minutes,
+                timer_interval_enabled, timer_interval_minutes
+            )
+            self.execution_thread.start()
+
             self.set_controls_enabled(False)
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
@@ -593,35 +614,35 @@ class AutoClickerApp(QMainWindow):
 
     def pause_execution(self):
         if self.is_running and not self.is_paused:
-            # =================【点击暂停时的处理】=================
             self.is_paused = True
             self.is_running = False
             self.execution_thread.pause()
             
             self.start_btn.setEnabled(True)
             self.pause_btn.setText("▶ 继续执行")
-            self.statusBar().showMessage("⏸ 任务已暂停 (您可以修改上方的【循环/停止】策略)")
+            self.statusBar().showMessage("⏸ 任务已暂停 (支持动态修改上方【循环/周期/停止】等策略)")
             
-            # 解锁循环与定时停止组件，允许用户中途改变心意！
+            # 解锁所有循环调度相关的控件，允许在暂停时“换挡”
             self.radio_infinite.setEnabled(True)
             self.radio_count.setEnabled(True)
             self.loop_spin.setEnabled(True)
+            
             self.timer_stop_checkbox.setEnabled(True)
             if self.timer_stop_checkbox.isChecked():
                 self.timer_stop_spin.setEnabled(True)
-            # =========================================================
+                
+            self.timer_interval_checkbox.setEnabled(True)
+            if self.timer_interval_checkbox.isChecked():
+                self.timer_interval_spin.setEnabled(True)
             
         elif self.is_paused:
-            # 兼容通过快捷键恢复执行的逻辑
             self.start_execution()
 
     def update_all_settings(self):
-        for step in self.steps:
-            # 此处省略随机延迟设置批量更新，交由各步骤自有配置决定
-            pass
+        pass
 
     def on_waiting_update(self, countdown_str):
-        self.statusBar().showMessage(f"⏳ 等待定时启动... 倒计时: {countdown_str}")
+        self.statusBar().showMessage(f"⏳ {countdown_str}")
 
     def on_execution_finished(self):
         self.is_running = False
@@ -632,7 +653,6 @@ class AutoClickerApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
-        self.statusBar().showMessage("✅ 任务已正常结束！")
 
     def on_info_msg(self, msg):
         self.statusBar().showMessage(f"✅ {msg}")
@@ -653,6 +673,7 @@ class AutoClickerApp(QMainWindow):
     def on_step_completed(self, step_index):
         self.current_step_index = step_index
         self.steps_table.selectRow(step_index)
+        self.statusBar().showMessage(f"▶ 正在执行... (当前步骤: {step_index + 1}/{len(self.steps)})")
 
     def delete_step(self):
         current_row = self.steps_table.currentRow()
@@ -750,7 +771,7 @@ class AutoClickerApp(QMainWindow):
             else:
                 jump_combo.setEnabled(False)
                 jump_combo.setCurrentIndex(0)
-                if step.step_type == 'coordinate' and step.click_type == 'jump':
+                if step.step_type == 'coordinate':
                     step.click_type = 'left'
                     step.jump_to = None
             jump_combo.blockSignals(False)
@@ -820,7 +841,9 @@ class AutoClickerApp(QMainWindow):
             "timer_start_enabled": self.timer_start_checkbox.isChecked(),
             "timer_start_time": self.timer_start_edit.time().toString("HH:mm:ss"),
             "timer_stop_enabled": self.timer_stop_checkbox.isChecked(),
-            "timer_stop_minutes": self.timer_stop_spin.value()
+            "timer_stop_minutes": self.timer_stop_spin.value(),
+            "timer_interval_enabled": self.timer_interval_checkbox.isChecked(),
+            "timer_interval_minutes": self.timer_interval_spin.value()
         }
         config_dir = os.path.dirname(file_path)
         for step in self.steps:
@@ -890,7 +913,6 @@ class AutoClickerApp(QMainWindow):
                         final_path = config_path
                 step_data["image_path"] = final_path
 
-            # 为了兼容旧配置，剥离被去除的旧属性
             if "random_delay_enabled" in step_data: del step_data["random_delay_enabled"]
             if "random_delay_min" in step_data: del step_data["random_delay_min"]
             if "random_delay_max" in step_data: del step_data["random_delay_max"]
@@ -916,12 +938,15 @@ class AutoClickerApp(QMainWindow):
         self.offset_y_spin.setValue(config.get("offset_y", 5))
         self.toggle_offset(Qt.Checked if offset_enabled else Qt.Unchecked)
 
-        # 还原定时配置
         self.timer_start_checkbox.setChecked(config.get("timer_start_enabled", False))
         if "timer_start_time" in config:
             self.timer_start_edit.setTime(QTime.fromString(config["timer_start_time"], "HH:mm:ss"))
+            
         self.timer_stop_checkbox.setChecked(config.get("timer_stop_enabled", False))
         self.timer_stop_spin.setValue(config.get("timer_stop_minutes", 60))
+        
+        self.timer_interval_checkbox.setChecked(config.get("timer_interval_enabled", False))
+        self.timer_interval_spin.setValue(config.get("timer_interval_minutes", 30))
 
         self.update_steps_table()
         self.setWindowTitle(f"{self.base_title} - [{os.path.basename(file_path)}]")
@@ -1022,10 +1047,16 @@ class ExecutionThread(QThread):
         self.timer_start_time_str = ""
         self.timer_stop_enabled = False
         self.timer_stop_minutes = 0
+        self.timer_interval_enabled = False
+        self.timer_interval_minutes = 0
+        
         self.actual_start_time = 0
         self.pause_start_time = 0
 
-    def set_params(self, loop_count, start_index=0, timer_start_enabled=False, timer_start_time_str="", timer_stop_enabled=False, timer_stop_minutes=0):
+    def set_params(self, loop_count, start_index=0, 
+                   timer_start_enabled=False, timer_start_time_str="", 
+                   timer_stop_enabled=False, timer_stop_minutes=0,
+                   timer_interval_enabled=False, timer_interval_minutes=0):
         self.loop_count = loop_count
         self.current_step_index = start_index
         self.current_loop = 0
@@ -1036,6 +1067,8 @@ class ExecutionThread(QThread):
         self.timer_start_time_str = timer_start_time_str
         self.timer_stop_enabled = timer_stop_enabled
         self.timer_stop_minutes = timer_stop_minutes
+        self.timer_interval_enabled = timer_interval_enabled
+        self.timer_interval_minutes = timer_interval_minutes
 
     def stop(self):
         self.is_stopped = True
@@ -1047,6 +1080,7 @@ class ExecutionThread(QThread):
     def resume(self):
         self.is_paused = False
         if self.actual_start_time > 0:
+            # 补偿暂停期间流失的时间，防止倒计时被意外吞噬
             self.actual_start_time += (time.time() - self.pause_start_time)
 
     def run(self):
@@ -1055,6 +1089,7 @@ class ExecutionThread(QThread):
                 self.finished.emit()
                 return
 
+            # =================【1. 每天定时启动检测】=================
             if self.timer_start_enabled:
                 now = datetime.datetime.now()
                 target_time = QTime.fromString(self.timer_start_time_str, "HH:mm:ss")
@@ -1072,7 +1107,7 @@ class ExecutionThread(QThread):
                         
                     hours, remainder = divmod(int(time_left), 3600)
                     minutes, seconds = divmod(remainder, 60)
-                    countdown_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    countdown_str = f"距启动: {hours:02d}:{minutes:02d}:{seconds:02d}"
                     self.waiting_update.emit(countdown_str)
                     
                     self._sleep_interruptible(1.0)
@@ -1080,67 +1115,111 @@ class ExecutionThread(QThread):
                 if self.is_stopped:
                     self.finished.emit()
                     return
+            # =========================================================
 
             self.actual_start_time = time.time()
 
-            # 此处判断逻辑会自动兼容由于用户中途在暂停时修改产生的 self.loop_count 变动
-            while (self.current_loop < self.loop_count or self.loop_count == 999999) and not self.is_stopped:
+            # 外层死循环：接管“间隔启动”的无限流转
+            while not self.is_stopped:
                 
-                if self.timer_stop_enabled:
-                    elapsed_minutes = (time.time() - self.actual_start_time) / 60.0
-                    if elapsed_minutes >= self.timer_stop_minutes:
-                        self.info_msg.emit(f"已达到设定的运行时间 ({self.timer_stop_minutes} 分钟)，任务自动结束！")
-                        self.stop()
-                        break
+                # 记录本轮大任务(Job)的起跑点，供“间隔启动”使用
+                job_start_time = time.time()
+                self.current_loop = 0 
+                self.current_step_index = 0
 
-                self.current_loop += 1
+                # =================【2. 核心工作循环】=================
+                while (self.current_loop < self.loop_count or self.loop_count == 999999) and not self.is_stopped:
+                    
+                    if self.timer_stop_enabled:
+                        elapsed_minutes = (time.time() - self.actual_start_time) / 60.0
+                        if elapsed_minutes >= self.timer_stop_minutes:
+                            self.info_msg.emit(f"挂机结束: 已达到安全停止保护 ({self.timer_stop_minutes} 分钟)！")
+                            self.stop()
+                            break
 
-                while self.current_step_index < len(self.parent.steps) and not self.is_stopped:
-                    while self.is_paused and not self.is_stopped:
-                        time.sleep(0.1)
+                    self.current_loop += 1
 
-                    if self.is_stopped:
-                        break
+                    while self.current_step_index < len(self.parent.steps) and not self.is_stopped:
+                        while self.is_paused and not self.is_stopped:
+                            time.sleep(0.1)
 
-                    if self.current_step_index >= len(self.parent.steps):
-                        break
+                        if self.is_stopped: break
+                        if self.current_step_index >= len(self.parent.steps): break
 
-                    step = self.parent.steps[self.current_step_index]
-                    target_pos = None
+                        step = self.parent.steps[self.current_step_index]
+                        target_pos = None
 
-                    if step.step_type == 'image':
-                        target_pos = self.find_image(step.image_path, step.similarity)
-                        if target_pos and self.parent.target_hwnd:
-                            left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
-                            target_pos = (target_pos[0] + left, target_pos[1] + top)
-                    else:
-                        target_pos = (step.x, step.y)
-                        if self.parent.target_hwnd:
-                            left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
-                            target_pos = (target_pos[0] + left, target_pos[1] + top)
+                        if step.step_type == 'image':
+                            target_pos = self.find_image(step.image_path, step.similarity)
+                            if target_pos and self.parent.target_hwnd:
+                                left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
+                                target_pos = (target_pos[0] + left, target_pos[1] + top)
+                        else:
+                            target_pos = (step.x, step.y)
+                            if self.parent.target_hwnd:
+                                left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
+                                target_pos = (target_pos[0] + left, target_pos[1] + top)
 
-                    # 基础步骤耗时
-                    total_wait = step.wait_time
+                        total_wait = step.wait_time
+                        if step.accept_random_delay and step.random_delay_enabled:
+                            total_wait += random.randint(step.random_delay_min, step.random_delay_max)
 
-                    if step.step_type == 'image' and step.click_type == 'jump':
-                        if target_pos is not None and step.jump_to is not None:
-                            self.current_step_index = step.jump_to
-                            self.step_completed.emit(self.current_step_index)
-                            self._sleep_interruptible(total_wait / 1000.0)
-                            continue
+                        if step.step_type == 'image' and step.click_type == 'jump':
+                            if target_pos is not None and step.jump_to is not None:
+                                self.current_step_index = step.jump_to
+                                self.step_completed.emit(self.current_step_index)
+                                self._sleep_interruptible(total_wait / 1000.0)
+                                continue
 
-                    if target_pos is not None and step.click_type != 'jump':
-                        self.click_target(target_pos, step)
+                        if target_pos is not None and step.click_type != 'jump':
+                            self.click_target(target_pos, step)
 
-                    self._sleep_interruptible(total_wait / 1000.0)
+                        self._sleep_interruptible(total_wait / 1000.0)
 
-                    if step.click_type != 'jump' or (step.click_type == 'jump' and target_pos is None):
-                        self.current_step_index += 1
+                        if step.click_type != 'jump' or (step.click_type == 'jump' and target_pos is None):
+                            self.current_step_index += 1
 
-                    self.step_completed.emit(self.current_step_index)
+                        self.step_completed.emit(self.current_step_index)
+                # ====================================================
+                
+                # 如果是被人为停止或达到了总时长上限，立刻跳出整个外层挂机流
+                if self.is_stopped: break
 
-                if not self.is_stopped:
-                    self.current_step_index = 0
+                # =================【3. 间隔挂机等待逻辑】=================
+                if self.timer_interval_enabled:
+                    while not self.is_stopped:
+                        
+                        # 同步检查：在漫长的等待期间，如果触发了彻底停止保护，直接切断
+                        if self.timer_stop_enabled:
+                            elapsed_total = (time.time() - self.actual_start_time) / 60.0
+                            if elapsed_total >= self.timer_stop_minutes:
+                                self.info_msg.emit(f"挂机结束: 已达到安全停止保护 ({self.timer_stop_minutes} 分钟)！")
+                                self.stop()
+                                break
+                                
+                        # 暂停时冻结时间
+                        while self.is_paused and not self.is_stopped:
+                            time.sleep(0.1)
+                            
+                        if self.is_stopped: break
+                            
+                        now = time.time()
+                        # 当前周期已流失的时间 = 现在时间 - 本次Job开始的时间
+                        elapsed = now - job_start_time 
+                        remaining = (self.timer_interval_minutes * 60) - elapsed
+                        
+                        if remaining <= 0:
+                            break # 时间到，开启下一轮大 Job!
+                            
+                        hours, rem = divmod(int(remaining), 3600)
+                        minutes, seconds = divmod(rem, 60)
+                        countdown_str = f"当次打完。距下次巡场: {hours:02d}:{minutes:02d}:{seconds:02d}"
+                        self.waiting_update.emit(countdown_str)
+                        self._sleep_interruptible(1.0)
+                else:
+                    # 如果没有开启间隔挂机，本轮循环打完就光荣退休
+                    break
+                # ====================================================
 
             self.finished.emit()
 
@@ -1170,7 +1249,6 @@ class ExecutionThread(QThread):
             if right - left <= 0 or bottom - top <= 0:
                 return None
             bbox = (left, top, right, bottom)
-            # 使用 PIL 防止子线程调用 Qt 原生抓屏发生锁死崩溃
             screen_image = ImageGrab.grab(bbox)
         else:
             screen_image = ImageGrab.grab()
@@ -1225,7 +1303,6 @@ class ExecutionThread(QThread):
                 self.parent.mouse.click(Button.left)
 
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
-        # V1.1 纯净回退版：最高效率的原生 SendMessage，绝对稳定
         lparam = win32api.MAKELONG(x, y)
         win32gui.SendMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
         time.sleep(0.01)
