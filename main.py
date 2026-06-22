@@ -61,7 +61,7 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.base_title = "自动点击工具 V1.3 - 完美循环修复版"
+        self.base_title = "自动点击工具 V1.4 - 锁点强效修复版"
         self.setWindowTitle(self.base_title)
         self.setMinimumSize(1000, 750)
         self.resize(1200, 850)
@@ -94,7 +94,8 @@ class AutoClickerApp(QMainWindow):
         self.execution_thread.finished.connect(self.on_execution_finished)
         self.execution_thread.error.connect(self.on_execution_error)
         self.execution_thread.info_msg.connect(self.on_info_msg) 
-        self.execution_thread.step_completed.connect(self.on_step_completed)
+        self.execution_thread.step_started.connect(self.on_step_started)
+        self.execution_thread.round_completed.connect(self.on_round_completed)
         self.execution_thread.waiting_update.connect(self.on_waiting_update) 
 
         self.coordinate_captured.connect(self.on_coordinate_captured)
@@ -102,7 +103,7 @@ class AutoClickerApp(QMainWindow):
         self.stop_select_window_mode_signal.connect(self.stop_select_window_mode)
         self.screenshot_closed.connect(self.on_screenshot_closed)
         
-        self.statusBar().showMessage("✨ 准备就绪，支持无限多开及周期性挂机任务")
+        self.statusBar().showMessage("✨ 准备就绪，支持无线多开及周期性挂机任务")
 
     def init_ui(self):
         font = QFont("Microsoft YaHei", 10)
@@ -184,23 +185,32 @@ class AutoClickerApp(QMainWindow):
         lt_layout.addWidget(self.radio_count, 0, 1)
         
         # Row 1: 单次启动循环的次数
-        lt_layout.addWidget(QLabel("单次运行次数:"), 1, 0)
+        lt_layout.addWidget(QLabel("单次执行圈数:"), 1, 0)
         self.loop_spin = QSpinBox()
         self.loop_spin.setRange(1, 99999)
         self.loop_spin.setValue(1)
         lt_layout.addWidget(self.loop_spin, 1, 1)
+
+        # Row 2: 轮次间隔缓冲
+        lt_layout.addWidget(QLabel("每圈结束后等待:"), 2, 0)
+        self.round_interval_spin = QDoubleSpinBox()
+        self.round_interval_spin.setRange(0.0, 3600.0)
+        self.round_interval_spin.setDecimals(1)
+        self.round_interval_spin.setValue(3.0)
+        self.round_interval_spin.setSuffix(" 秒 (防游戏加载慢)")
+        lt_layout.addWidget(self.round_interval_spin, 2, 1)
         
-        # Row 2: 定时启动 (特定时间点)
+        # Row 3: 定时启动 (特定时间点)
         self.timer_start_checkbox = QCheckBox("每天定时启动:")
         self.timer_start_edit = QTimeEdit()
         self.timer_start_edit.setDisplayFormat("HH:mm:ss")
         self.timer_start_edit.setTime(QTime.currentTime())
         self.timer_start_edit.setEnabled(False)
         self.timer_start_checkbox.stateChanged.connect(lambda state: self.timer_start_edit.setEnabled(state == Qt.Checked))
-        lt_layout.addWidget(self.timer_start_checkbox, 2, 0)
-        lt_layout.addWidget(self.timer_start_edit, 2, 1)
+        lt_layout.addWidget(self.timer_start_checkbox, 3, 0)
+        lt_layout.addWidget(self.timer_start_edit, 3, 1)
 
-        # Row 3: 周期启动 (每隔多久)
+        # Row 4: 周期启动 (每隔多久)
         self.timer_interval_checkbox = QCheckBox("周期挂机启动:")
         self.timer_interval_spin = QSpinBox()
         self.timer_interval_spin.setRange(1, 99999)
@@ -208,10 +218,10 @@ class AutoClickerApp(QMainWindow):
         self.timer_interval_spin.setSuffix(" 分钟/次")
         self.timer_interval_spin.setEnabled(False)
         self.timer_interval_checkbox.stateChanged.connect(lambda state: self.timer_interval_spin.setEnabled(state == Qt.Checked))
-        lt_layout.addWidget(self.timer_interval_checkbox, 3, 0)
-        lt_layout.addWidget(self.timer_interval_spin, 3, 1)
+        lt_layout.addWidget(self.timer_interval_checkbox, 4, 0)
+        lt_layout.addWidget(self.timer_interval_spin, 4, 1)
 
-        # Row 4: 彻底停止保护
+        # Row 5: 彻底停止保护
         self.timer_stop_checkbox = QCheckBox("挂机彻底停止:")
         self.timer_stop_spin = QSpinBox()
         self.timer_stop_spin.setRange(1, 99999)
@@ -219,8 +229,8 @@ class AutoClickerApp(QMainWindow):
         self.timer_stop_spin.setSuffix(" 分钟后")
         self.timer_stop_spin.setEnabled(False)
         self.timer_stop_checkbox.stateChanged.connect(lambda state: self.timer_stop_spin.setEnabled(state == Qt.Checked))
-        lt_layout.addWidget(self.timer_stop_checkbox, 4, 0)
-        lt_layout.addWidget(self.timer_stop_spin, 4, 1)
+        lt_layout.addWidget(self.timer_stop_checkbox, 5, 0)
+        lt_layout.addWidget(self.timer_stop_spin, 5, 1)
         
         loop_group.setLayout(lt_layout)
         left_layout.addWidget(loop_group)
@@ -330,12 +340,12 @@ class AutoClickerApp(QMainWindow):
 
         self.steps_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.steps_table.setAlternatingRowColors(True)
-        self.steps_table.setStyleSheet("""
-            QTableWidget { gridline-color: #ddd; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; }
-            QTableWidget::item { padding: 6px 4px; min-height: 20px; text-align: center; }
-            QTableWidget::item:selected { background-color: #e3f2fd; }
-            QHeaderView::section { background-color: #f0f0f0; padding: 6px; border: 1px solid #ddd; font-weight: bold; text-align: center; }
-        """)
+        self.steps_table.setStyleSheet(
+            "QTableWidget { gridline-color: #ddd; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; }"
+            "QTableWidget::item { padding: 6px 4px; min-height: 20px; text-align: center; }"
+            "QTableWidget::item:selected { background-color: #e3f2fd; }"
+            "QHeaderView::section { background-color: #f0f0f0; padding: 6px; border: 1px solid #ddd; font-weight: bold; text-align: center; }"
+        )
         self.steps_table.verticalHeader().setDefaultSectionSize(35)
         self.steps_table.verticalHeader().setVisible(False)
         self.steps_table.cellClicked.connect(self.on_step_selected_from_table)
@@ -359,7 +369,7 @@ class AutoClickerApp(QMainWindow):
 
     def set_controls_enabled(self, enabled):
         controls = [
-            self.radio_infinite, self.radio_count, self.loop_spin,
+            self.radio_infinite, self.radio_count, self.loop_spin, self.round_interval_spin,
             self.timer_start_checkbox, self.timer_start_edit,
             self.timer_interval_checkbox, self.timer_interval_spin, 
             self.timer_stop_checkbox, self.timer_stop_spin,
@@ -555,13 +565,14 @@ class AutoClickerApp(QMainWindow):
         timer_interval_minutes = self.timer_interval_spin.value()
         timer_stop_enabled = self.timer_stop_checkbox.isChecked()
         timer_stop_minutes = self.timer_stop_spin.value()
+        round_interval = self.round_interval_spin.value()
 
         if self.is_paused:
             self.is_paused = False
             self.is_running = True
             
-            # 【动态同步】
             self.execution_thread.loop_count = self.get_loop_count()
+            self.execution_thread.round_interval = self.round_interval_spin.value()
             self.execution_thread.timer_stop_enabled = self.timer_stop_checkbox.isChecked()
             self.execution_thread.timer_stop_minutes = self.timer_stop_spin.value()
             self.execution_thread.timer_interval_enabled = self.timer_interval_checkbox.isChecked()
@@ -569,10 +580,10 @@ class AutoClickerApp(QMainWindow):
             
             self.execution_thread.resume()
             
-            # 锁定相关控件
             self.radio_infinite.setEnabled(False)
             self.radio_count.setEnabled(False)
             self.loop_spin.setEnabled(False)
+            self.round_interval_spin.setEnabled(False)
             self.timer_stop_checkbox.setEnabled(False)
             self.timer_stop_spin.setEnabled(False)
             self.timer_interval_checkbox.setEnabled(False)
@@ -586,11 +597,13 @@ class AutoClickerApp(QMainWindow):
             self.is_running = True
             self.is_paused = False
             loop_count = self.get_loop_count()
+            
             self.execution_thread.set_params(
                 loop_count, self.current_step_index, 
                 timer_start_enabled, timer_start_time, 
                 timer_stop_enabled, timer_stop_minutes,
-                timer_interval_enabled, timer_interval_minutes
+                timer_interval_enabled, timer_interval_minutes,
+                round_interval
             )
             self.execution_thread.start()
 
@@ -610,6 +623,7 @@ class AutoClickerApp(QMainWindow):
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
         self.statusBar().showMessage("⏹ 任务已被手动停止")
+        self.steps_table.clearSelection()
 
     def pause_execution(self):
         if self.is_running and not self.is_paused:
@@ -624,6 +638,7 @@ class AutoClickerApp(QMainWindow):
             self.radio_infinite.setEnabled(True)
             self.radio_count.setEnabled(True)
             self.loop_spin.setEnabled(True)
+            self.round_interval_spin.setEnabled(True)
             
             self.timer_stop_checkbox.setEnabled(True)
             if self.timer_stop_checkbox.isChecked():
@@ -639,10 +654,28 @@ class AutoClickerApp(QMainWindow):
     def update_all_settings(self):
         pass
 
-    def on_waiting_update(self, countdown_str):
-        self.statusBar().showMessage(f"⏳ {countdown_str}")
+    # =================【全新 UI 透视反馈逻辑】=================
+    def on_step_started(self, step_index, current_loop, wait_time_ms):
+        total_steps = len(self.steps)
+        total_loop = self.get_loop_count()
+        loop_str = "无限" if total_loop == 999999 else str(total_loop)
+        
+        # 实时同步状态栏，清楚地显示当步要等待的时间，消除视觉卡死感
+        if step_index < total_steps:
+            self.steps_table.selectRow(step_index)
+            wait_sec = wait_time_ms / 1000.0
+            self.statusBar().showMessage(f"▶ 第 {current_loop}/{loop_str} 圈 | 正在执行: 步骤 {step_index + 1}/{total_steps} (该步将等待 {wait_sec} 秒...)")
 
-    # 【重要视觉 Bug 修复】：确保任务完成后，状态栏完美显示成功信息
+    def on_round_completed(self, current_loop):
+        self.steps_table.clearSelection()
+        interval = self.round_interval_spin.value()
+        self.statusBar().showMessage(f"▶ 第 {current_loop} 圈完毕！系统缓冲中 (等待 {interval} 秒进入下一圈)...")
+
+    def on_waiting_update(self, msg):
+        self.steps_table.clearSelection()
+        self.statusBar().showMessage(f"⏳ {msg}")
+    # =======================================================
+
     def on_execution_finished(self):
         self.is_running = False
         self.is_paused = False
@@ -652,7 +685,7 @@ class AutoClickerApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
-        self.statusBar().showMessage("✅ 任务已彻底完成或到达定时设定，完美结束！")
+        self.steps_table.clearSelection()
 
     def on_info_msg(self, msg):
         self.statusBar().showMessage(f"✅ {msg}")
@@ -669,17 +702,6 @@ class AutoClickerApp(QMainWindow):
         self.pause_btn.setText("⏸ 暂停执行")
         self.statusBar().showMessage(f"❌ 发生错误: {error_msg}")
         QMessageBox.critical(self, "错误", f"执行出错: {error_msg}")
-
-    # 【核心视觉修复】：防止显示 104/103 导致越界
-    def on_step_completed(self, step_index):
-        self.current_step_index = step_index
-        total_steps = len(self.steps)
-        if step_index < total_steps:
-            self.steps_table.selectRow(step_index)
-            self.statusBar().showMessage(f"▶ 正在执行... (当前步骤: {step_index + 1}/{total_steps})")
-        else:
-            self.steps_table.clearSelection()
-            self.statusBar().showMessage("▶ 本轮所有步骤执行完毕，准备后续操作...")
 
     def delete_step(self):
         current_row = self.steps_table.currentRow()
@@ -841,6 +863,7 @@ class AutoClickerApp(QMainWindow):
             "hotkey": self.hotkey,
             "loop_type": self.loop_type_group.checkedId(),
             "loop_count": self.loop_spin.value(),
+            "round_interval": self.round_interval_spin.value(),
             "offset_enabled": self.offset_checkbox.isChecked(),
             "offset_x": self.offset_x_spin.value(),
             "offset_y": self.offset_y_spin.value(),
@@ -937,6 +960,7 @@ class AutoClickerApp(QMainWindow):
             self.radio_count.setChecked(True)
 
         self.loop_spin.setValue(config.get("loop_count", 1000))
+        self.round_interval_spin.setValue(config.get("round_interval", 3.0))
 
         offset_enabled = config.get("offset_enabled", False)
         self.offset_checkbox.setChecked(offset_enabled)
@@ -1037,7 +1061,8 @@ class ExecutionThread(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
     info_msg = pyqtSignal(str)
-    step_completed = pyqtSignal(int)
+    step_started = pyqtSignal(int, int, int) 
+    round_completed = pyqtSignal(int)
     waiting_update = pyqtSignal(str)
 
     def __init__(self, parent):
@@ -1055,6 +1080,7 @@ class ExecutionThread(QThread):
         self.timer_stop_minutes = 0
         self.timer_interval_enabled = False
         self.timer_interval_minutes = 0
+        self.round_interval = 3.0
         
         self.actual_start_time = 0
         self.pause_start_time = 0
@@ -1062,7 +1088,8 @@ class ExecutionThread(QThread):
     def set_params(self, loop_count, start_index=0, 
                    timer_start_enabled=False, timer_start_time_str="", 
                    timer_stop_enabled=False, timer_stop_minutes=0,
-                   timer_interval_enabled=False, timer_interval_minutes=0):
+                   timer_interval_enabled=False, timer_interval_minutes=0,
+                   round_interval=3.0):
         self.loop_count = loop_count
         self.current_step_index = start_index
         self.current_loop = 0
@@ -1075,6 +1102,7 @@ class ExecutionThread(QThread):
         self.timer_stop_minutes = timer_stop_minutes
         self.timer_interval_enabled = timer_interval_enabled
         self.timer_interval_minutes = timer_interval_minutes
+        self.round_interval = round_interval
 
     def stop(self):
         self.is_stopped = True
@@ -1147,8 +1175,15 @@ class ExecutionThread(QThread):
                         if self.current_step_index >= len(self.parent.steps): break
 
                         step = self.parent.steps[self.current_step_index]
-                        target_pos = None
+                        
+                        total_wait = step.wait_time
+                        if step.accept_random_delay and step.random_delay_enabled:
+                            total_wait += random.randint(step.random_delay_min, step.random_delay_max)
 
+                        # 在点击并等待前，立马将 UI 更新为“正在等待此步”
+                        self.step_started.emit(self.current_step_index, self.current_loop, total_wait)
+
+                        target_pos = None
                         if step.step_type == 'image':
                             target_pos = self.find_image(step.image_path, step.similarity)
                             if target_pos and self.parent.target_hwnd:
@@ -1160,15 +1195,9 @@ class ExecutionThread(QThread):
                                 left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
                                 target_pos = (target_pos[0] + left, target_pos[1] + top)
 
-                        total_wait = step.wait_time
-                        if step.accept_random_delay and step.random_delay_enabled:
-                            total_wait += random.randint(step.random_delay_min, step.random_delay_max)
-
                         if step.step_type == 'image' and step.click_type == 'jump':
                             if target_pos is not None and step.jump_to is not None:
                                 self.current_step_index = step.jump_to
-                                # 这里不再发送 104/103 导致的越界，交由主循环增加
-                                self.step_completed.emit(self.current_step_index)
                                 self._sleep_interruptible(total_wait / 1000.0)
                                 continue
 
@@ -1180,11 +1209,14 @@ class ExecutionThread(QThread):
                         if step.click_type != 'jump' or (step.click_type == 'jump' and target_pos is None):
                             self.current_step_index += 1
 
-                        self.step_completed.emit(self.current_step_index)
+                    if not self.is_stopped:
+                        self.current_step_index = 0
+                        self.round_completed.emit(self.current_loop)
+                        # 【核心防漏逻辑】：打完一圈后，强制等待指定的秒数供游戏加载，不会瞬间重置并光速误点下一圈！
+                        self._sleep_interruptible(self.round_interval)
 
                 if self.is_stopped: break
 
-                # =================【【核心修复区】间隔挂机等待逻辑】=================
                 if self.timer_interval_enabled:
                     while not self.is_stopped:
                         
@@ -1213,9 +1245,7 @@ class ExecutionThread(QThread):
                         self.waiting_update.emit(countdown_str)
                         self._sleep_interruptible(1.0)
                 else:
-                    # 【逻辑修复】：如果不启用周期启动，说明用户就是单纯想打完就结束
                     break
-                # ====================================================
 
             self.finished.emit()
 
@@ -1299,8 +1329,10 @@ class ExecutionThread(QThread):
                 self.parent.mouse.click(Button.left)
 
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
-        # V1.1 纯净回退版：最原始的 SendMessage
+        # 针对模拟器偶尔漏发的第一步指令，前置一个 WM_MOUSEMOVE 定位防吃帧
         lparam = win32api.MAKELONG(x, y)
+        win32gui.SendMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
+        time.sleep(0.01)
         win32gui.SendMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
         time.sleep(0.01)
         win32gui.SendMessage(hwnd, up_msg, 0, lparam)
