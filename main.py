@@ -28,7 +28,7 @@ except:
         pass
 
 # ==========================================
-# 核心类：步骤数据结构 (存储每一步的关键开关与配置)
+# 核心类：步骤数据结构
 # ==========================================
 class Step:
     def __init__(self, step_type, image_path=None, x=None, y=None,
@@ -63,8 +63,7 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        # V3.0 彻底适配模拟器与高频点击的终极版
-        self.base_title = "自动点击工具 V3.0 - 模拟器/长挂机防锁死版"
+        self.base_title = "自动点击工具 V2.2 - 轮次缓冲可视化版"
         self.setWindowTitle(self.base_title)
         
         self.setMinimumSize(1000, 700)
@@ -97,8 +96,7 @@ class AutoClickerApp(QMainWindow):
         self.execution_thread = ExecutionThread(self)
         self.execution_thread.finished.connect(self.on_execution_finished)
         self.execution_thread.error.connect(self.on_execution_error)
-        self.execution_thread.step_completed.connect(self.on_step_completed)
-        self.execution_thread.loop_updated.connect(self.on_loop_updated)
+        self.execution_thread.step_started.connect(self.on_step_started)
 
         self.coordinate_captured.connect(self.on_coordinate_captured)
         self.stop_coordinate_mode.connect(self.stop_add_coordinate_mode)
@@ -185,6 +183,17 @@ class AutoClickerApp(QMainWindow):
         count_layout.addWidget(self.loop_spin)
         loop_layout.addLayout(count_layout)
         
+        # 【新增：轮次间隔功能】
+        round_interval_layout = QHBoxLayout()
+        round_interval_layout.addWidget(QLabel("轮次间隔:"))
+        self.round_interval_spin = QDoubleSpinBox()
+        self.round_interval_spin.setRange(0.0, 3600.0)
+        self.round_interval_spin.setDecimals(1)
+        self.round_interval_spin.setValue(1.0)
+        self.round_interval_spin.setSuffix(" 秒 (等游戏加载)")
+        round_interval_layout.addWidget(self.round_interval_spin)
+        loop_layout.addLayout(round_interval_layout)
+
         timer_layout = QHBoxLayout()
         self.timer_checkbox = QCheckBox("启用定时停止")
         self.timer_spin = QSpinBox()
@@ -343,7 +352,7 @@ class AutoClickerApp(QMainWindow):
     def set_controls_enabled(self, enabled):
         controls = [
             self.radio_infinite, self.radio_count, self.loop_spin,
-            self.timer_checkbox, self.timer_spin, 
+            self.round_interval_spin, self.timer_checkbox, self.timer_spin, 
             self.offset_checkbox, self.offset_x_spin, self.offset_y_spin,
             self.random_delay_checkbox, self.random_delay_min_spin, self.random_delay_max_spin,
             self.hotkey_preset, self.steps_table, self.add_image_btn,
@@ -400,14 +409,10 @@ class AutoClickerApp(QMainWindow):
     def on_select_window_click(self, x, y, button, pressed):
         if pressed and button == Button.left:
             hwnd = win32gui.WindowFromPoint((x, y))
-            # 【V3.0 核心修复】：彻底删除 while 回溯循环！
-            # 模拟器的鼠标事件大多由内部的 RenderWindow 处理，如果回溯到最外层相框，
-            # 系统就会把点击发给相框，导致内部画布经常性漏收“抬起”事件引发死锁。
-            # 现在我们直接绑定最底层的那一块真实的子窗口！
+            while win32gui.GetParent(hwnd) != 0: hwnd = win32gui.GetParent(hwnd)
             self.target_hwnd = hwnd
             window_title = win32gui.GetWindowText(hwnd)
-            class_name = win32gui.GetClassName(hwnd)
-            self.window_title_edit.setText(f"{window_title} [{class_name}] (HWND: {hwnd})")
+            self.window_title_edit.setText(f"{window_title} (HWND: {hwnd})")
             self.stop_select_window_mode_signal.emit()
             return False
         return True
@@ -531,28 +536,22 @@ class AutoClickerApp(QMainWindow):
         
         timer_enabled = self.timer_checkbox.isChecked()
         timer_minutes = self.timer_spin.value()
+        round_interval = self.round_interval_spin.value()
 
         if self.is_paused:
             self.is_paused = False
             self.is_running = True
             self.execution_thread.resume()
             self.pause_btn.setText("⏸ 暂停执行")
-            
-            total = self.get_loop_count()
-            total_str = "无限" if total == 999999 else str(total)
-            self.statusBar().showMessage(f"▶ 恢复执行... 当前循环: 第 {self.execution_thread.current_loop} 次 / 共 {total_str} 次")
         else:
             self.current_step_index = 0
             self.is_running = True
             self.is_paused = False
             loop_count = self.get_loop_count()
             
-            self.execution_thread.set_params(loop_count, self.current_step_index, timer_enabled, timer_minutes)
+            # 将新的轮次间隔时间传递给线程
+            self.execution_thread.set_params(loop_count, self.current_step_index, timer_enabled, timer_minutes, round_interval)
             self.execution_thread.start()
-            
-            msg = "▶ 开始执行..."
-            if timer_enabled: msg += f" [已开启定时停止: {timer_minutes} 分钟]"
-            self.statusBar().showMessage(msg)
             
         self.set_controls_enabled(False)
         self.start_btn.setEnabled(False)
@@ -587,10 +586,6 @@ class AutoClickerApp(QMainWindow):
             self.execution_thread.resume()
             self.start_btn.setEnabled(False)
             self.pause_btn.setText("⏸ 暂停执行")
-            
-            total = self.get_loop_count()
-            total_str = "无限" if total == 999999 else str(total)
-            self.statusBar().showMessage(f"▶ 恢复执行... 当前循环: 第 {self.execution_thread.current_loop} 次 / 共 {total_str} 次")
 
     def update_all_settings(self):
         for step in self.steps:
@@ -620,16 +615,14 @@ class AutoClickerApp(QMainWindow):
         self.pause_btn.setText("⏸ 暂停执行")
         self.statusBar().showMessage(f"❌ 执行提示: {error_msg}")
         QMessageBox.critical(self, "执行提醒", f"{error_msg}")
-
-    def on_step_completed(self, step_index):
-        self.current_step_index = step_index
-        self.steps_table.selectRow(step_index)
         
-    def on_loop_updated(self, current, total):
+    # 【核心可视化】：同步接收线程正在执行的步骤索引
+    def on_step_started(self, step_index):
+        self.steps_table.selectRow(step_index)
+        total = self.get_loop_count()
         total_str = "无限" if total == 999999 else str(total)
-        self.statusBar().showMessage(f"▶ 正在执行中... 当前循环: 第 {current} 次 / 共 {total_str} 次")
+        self.statusBar().showMessage(f"▶ 循环: 第 {self.execution_thread.current_loop}/{total_str} 次 | 正在执行: 步骤 {step_index + 1}")
 
-    # ---------------- 步骤列表的增删改 ----------------
     def delete_step(self):
         current_row = self.steps_table.currentRow()
         if current_row >= 0:
@@ -786,7 +779,8 @@ class AutoClickerApp(QMainWindow):
             "random_delay_min": self.random_delay_min_spin.value(),
             "random_delay_max": self.random_delay_max_spin.value(),
             "timer_enabled": self.timer_checkbox.isChecked(),
-            "timer_minutes": self.timer_spin.value()
+            "timer_minutes": self.timer_spin.value(),
+            "round_interval": self.round_interval_spin.value() # 保存轮次间隔
         }
         config_dir = os.path.dirname(file_path)
         for step in self.steps:
@@ -858,9 +852,10 @@ class AutoClickerApp(QMainWindow):
         self.random_delay_max_spin.setValue(config.get("random_delay_max", 1000))
         self.toggle_random_delay(Qt.Checked if random_delay_enabled else Qt.Unchecked)
         
-        timer_enabled = config.get("timer_enabled", False)
-        self.timer_checkbox.setChecked(timer_enabled)
+        self.timer_checkbox.setChecked(config.get("timer_enabled", False))
         self.timer_spin.setValue(config.get("timer_minutes", 60))
+        # 还原轮次间隔
+        self.round_interval_spin.setValue(config.get("round_interval", 1.0))
 
         self.update_steps_table()
         self.setWindowTitle(f"{self.base_title} - [{os.path.basename(file_path)}]")
@@ -944,7 +939,7 @@ class ExecutionThread(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
     step_completed = pyqtSignal(int)
-    loop_updated = pyqtSignal(int, int) 
+    step_started = pyqtSignal(int) # 【新增】专门用于更新状态栏透视
 
     def __init__(self, parent):
         super().__init__()
@@ -958,8 +953,9 @@ class ExecutionThread(QThread):
         self.timer_minutes = 0
         self.start_time = 0
         self.pause_start_time = 0
+        self.round_interval = 1.0
 
-    def set_params(self, loop_count, start_index=0, timer_enabled=False, timer_minutes=0):
+    def set_params(self, loop_count, start_index=0, timer_enabled=False, timer_minutes=0, round_interval=1.0):
         self.loop_count = loop_count
         self.current_step_index = start_index
         self.current_loop = 0
@@ -968,6 +964,7 @@ class ExecutionThread(QThread):
         
         self.timer_enabled = timer_enabled
         self.timer_minutes = timer_minutes
+        self.round_interval = round_interval
         self.start_time = time.time()
 
     def stop(self): self.is_stopped = True
@@ -994,7 +991,6 @@ class ExecutionThread(QThread):
                         break
 
                 self.current_loop += 1
-                self.loop_updated.emit(self.current_loop, self.loop_count)
                 
                 while self.current_step_index < len(self.parent.steps) and not self.is_stopped:
                     while self.is_paused and not self.is_stopped: time.sleep(0.1)
@@ -1006,6 +1002,9 @@ class ExecutionThread(QThread):
                         break
 
                     try:
+                        # 【状态栏更新】让您清楚看到当前在等哪个步骤
+                        self.step_started.emit(self.current_step_index)
+                        
                         step = self.parent.steps[self.current_step_index]
                         target_pos = None
                         
@@ -1027,7 +1026,6 @@ class ExecutionThread(QThread):
                         if step.step_type == 'image' and step.click_type == 'jump':
                             if target_pos is not None and step.jump_to is not None:
                                 self.current_step_index = step.jump_to
-                                self.step_completed.emit(self.current_step_index)
                                 self._sleep_interruptible(total_wait / 1000.0)
                                 continue
 
@@ -1036,19 +1034,19 @@ class ExecutionThread(QThread):
                         elif target_pos is None and step.click_type != 'jump':
                             pass 
 
+                        # 执行完毕该步骤的等待时间
                         self._sleep_interruptible(total_wait / 1000.0)
 
                         if step.click_type != 'jump' or (step.click_type == 'jump' and target_pos is None):
                             self.current_step_index += 1
-                        self.step_completed.emit(self.current_step_index)
                         
                     except Exception as step_error:
                         time.sleep(0.5)
 
                 if not self.is_stopped:
                     self.current_step_index = 0
-                    # 每轮循环结束后强制给游戏画面 0.5 到 1 秒的刷新喘息时间
-                    self._sleep_interruptible(random.uniform(0.5, 1.0))
+                    # 【核心修复：加载时差】每轮结束后，按照您设置的“轮次间隔”等待游戏画面加载回原始状态
+                    self._sleep_interruptible(self.round_interval)
 
             self.finished.emit()
             
@@ -1125,28 +1123,19 @@ class ExecutionThread(QThread):
         y = max(0, int(y))
         lparam = win32api.MAKELONG(x, y)
 
-        # 【V3.0 核心修复】：彻底抛弃容易超时的 SendMessage，使用纯净的异步 PostMessage
-        # 且去除了容易让安卓模拟器输入映射逻辑崩溃的 WM_CANCELMODE 干扰码
         try:
-            # 1. 发送移动信号，激活悬停状态
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-            time.sleep(0.02)
+            time.sleep(random.uniform(0.02, 0.05))
             
-            # 2. 发送按下
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
             
-            # 3. 稳妥的按压停留（60-80毫秒），给足游戏渲染帧处理时间
-            time.sleep(random.uniform(0.06, 0.08)) 
+            time.sleep(random.uniform(0.06, 0.12)) 
             
-            # 4. 发送抬起
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            
-            # 5. 防吞帧：10毫秒后追加一次冗余抬起信号，双重保险
             time.sleep(0.01)
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
             
         finally:
-            # 6. 原地微动 1 像素解除长按或悬停状态，绝不跨屏幕甩动导致拖拽死锁
             jitter_lparam = win32api.MAKELONG(x + 1, y + 1)
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, jitter_lparam)
 
