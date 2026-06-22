@@ -63,8 +63,8 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        # V2.1 针对纯坐标模式的终极优化版
-        self.base_title = "自动点击工具 V2.1 - 纯坐标优化版"
+        # V3.0 彻底适配模拟器与高频点击的终极版
+        self.base_title = "自动点击工具 V3.0 - 模拟器/长挂机防锁死版"
         self.setWindowTitle(self.base_title)
         
         self.setMinimumSize(1000, 700)
@@ -400,10 +400,14 @@ class AutoClickerApp(QMainWindow):
     def on_select_window_click(self, x, y, button, pressed):
         if pressed and button == Button.left:
             hwnd = win32gui.WindowFromPoint((x, y))
-            while win32gui.GetParent(hwnd) != 0: hwnd = win32gui.GetParent(hwnd)
+            # 【V3.0 核心修复】：彻底删除 while 回溯循环！
+            # 模拟器的鼠标事件大多由内部的 RenderWindow 处理，如果回溯到最外层相框，
+            # 系统就会把点击发给相框，导致内部画布经常性漏收“抬起”事件引发死锁。
+            # 现在我们直接绑定最底层的那一块真实的子窗口！
             self.target_hwnd = hwnd
             window_title = win32gui.GetWindowText(hwnd)
-            self.window_title_edit.setText(f"{window_title} (HWND: {hwnd})")
+            class_name = win32gui.GetClassName(hwnd)
+            self.window_title_edit.setText(f"{window_title} [{class_name}] (HWND: {hwnd})")
             self.stop_select_window_mode_signal.emit()
             return False
         return True
@@ -1005,14 +1009,12 @@ class ExecutionThread(QThread):
                         step = self.parent.steps[self.current_step_index]
                         target_pos = None
                         
-                        # 【V2.1 针对纯坐标的强力修正】：如果这一步是纯坐标，根本就不去找图，直接返回坐标值
                         if step.step_type == 'image':
                             target_pos = self.find_image(step.image_path, step.similarity)
                             if target_pos and self.parent.target_hwnd:
                                 left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
                                 target_pos = (target_pos[0] + left, target_pos[1] + top)
                         else:
-                            # 纯坐标模式，直接使用预设的 x,y 坐标
                             target_pos = (step.x, step.y)
                             if self.parent.target_hwnd:
                                 left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
@@ -1043,10 +1045,9 @@ class ExecutionThread(QThread):
                     except Exception as step_error:
                         time.sleep(0.5)
 
-                # 【V2.1 轮次间强制缓冲】：解决第一轮跑到最后瞬间开启第二轮导致游戏漏掉坐标点击的问题
                 if not self.is_stopped:
                     self.current_step_index = 0
-                    # 每一轮彻底跑完后，强制给游戏 0.5 到 1 秒的喘息/画面刷新时间
+                    # 每轮循环结束后强制给游戏画面 0.5 到 1 秒的刷新喘息时间
                     self._sleep_interruptible(random.uniform(0.5, 1.0))
 
             self.finished.emit()
@@ -1124,32 +1125,30 @@ class ExecutionThread(QThread):
         y = max(0, int(y))
         lparam = win32api.MAKELONG(x, y)
 
-        timeout = 100 
-        result = ctypes.c_ulong()
-
-        def send_msg(msg, wparam, lp):
-            ctypes.windll.user32.SendMessageTimeoutW(
-                hwnd, msg, wparam, lp,
-                0x0002, timeout, ctypes.byref(result)
-            )
-
+        # 【V3.0 核心修复】：彻底抛弃容易超时的 SendMessage，使用纯净的异步 PostMessage
+        # 且去除了容易让安卓模拟器输入映射逻辑崩溃的 WM_CANCELMODE 干扰码
         try:
-            send_msg(win32con.WM_MOUSEMOVE, 0, lparam)
-            time.sleep(random.uniform(0.02, 0.05))
+            # 1. 发送移动信号，激活悬停状态
+            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
+            time.sleep(0.02)
             
-            send_msg(down_msg, win32con.MK_LBUTTON, lparam)
+            # 2. 发送按下
+            win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
             
-            time.sleep(random.uniform(0.06, 0.12)) 
+            # 3. 稳妥的按压停留（60-80毫秒），给足游戏渲染帧处理时间
+            time.sleep(random.uniform(0.06, 0.08)) 
             
-            send_msg(up_msg, 0, lparam)
+            # 4. 发送抬起
+            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
+            
+            # 5. 防吞帧：10毫秒后追加一次冗余抬起信号，双重保险
             time.sleep(0.01)
-            
-            send_msg(up_msg, 0, lparam)
+            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
             
         finally:
-            jitter_lparam = win32api.MAKELONG(x + 2, y + 2)
-            send_msg(win32con.WM_MOUSEMOVE, 0, jitter_lparam)
-            send_msg(0x001F, 0, 0) 
+            # 6. 原地微动 1 像素解除长按或悬停状态，绝不跨屏幕甩动导致拖拽死锁
+            jitter_lparam = win32api.MAKELONG(x + 1, y + 1)
+            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, jitter_lparam)
 
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
