@@ -63,7 +63,8 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.base_title = "自动点击工具 V1.9 - 定时与防死锁版"
+        # V2.1 针对纯坐标模式的终极优化版
+        self.base_title = "自动点击工具 V2.1 - 纯坐标优化版"
         self.setWindowTitle(self.base_title)
         
         self.setMinimumSize(1000, 700)
@@ -165,7 +166,6 @@ class AutoClickerApp(QMainWindow):
         file_group.setLayout(file_layout)
         left_layout.addWidget(file_group)
 
-        # 循环与定时设置组
         loop_group = QGroupBox("循环设置")
         loop_layout = QVBoxLayout()
         self.loop_type_group = QButtonGroup()
@@ -185,12 +185,11 @@ class AutoClickerApp(QMainWindow):
         count_layout.addWidget(self.loop_spin)
         loop_layout.addLayout(count_layout)
         
-        # 【新增】定时功能面板
         timer_layout = QHBoxLayout()
         self.timer_checkbox = QCheckBox("启用定时停止")
         self.timer_spin = QSpinBox()
         self.timer_spin.setRange(1, 99999)
-        self.timer_spin.setValue(60) # 默认60分钟
+        self.timer_spin.setValue(60) 
         self.timer_spin.setSuffix(" 分钟")
         self.timer_spin.setEnabled(False)
         self.timer_checkbox.stateChanged.connect(lambda state: self.timer_spin.setEnabled(state == Qt.Checked))
@@ -344,7 +343,7 @@ class AutoClickerApp(QMainWindow):
     def set_controls_enabled(self, enabled):
         controls = [
             self.radio_infinite, self.radio_count, self.loop_spin,
-            self.timer_checkbox, self.timer_spin, # 【新增】定时器组件锁定
+            self.timer_checkbox, self.timer_spin, 
             self.offset_checkbox, self.offset_x_spin, self.offset_y_spin,
             self.random_delay_checkbox, self.random_delay_min_spin, self.random_delay_max_spin,
             self.hotkey_preset, self.steps_table, self.add_image_btn,
@@ -520,7 +519,6 @@ class AutoClickerApp(QMainWindow):
     def get_loop_count(self):
         return 999999 if self.radio_infinite.isChecked() else self.loop_spin.value()
 
-    # ---------------- 线程与执行控制及状态栏更新 ----------------
     def start_execution(self):
         if not self.steps:
             QMessageBox.warning(self, "错误", "没有可执行的步骤")
@@ -545,7 +543,6 @@ class AutoClickerApp(QMainWindow):
             self.is_paused = False
             loop_count = self.get_loop_count()
             
-            # 传递循环与定时参数到执行线程
             self.execution_thread.set_params(loop_count, self.current_step_index, timer_enabled, timer_minutes)
             self.execution_thread.start()
             
@@ -784,7 +781,6 @@ class AutoClickerApp(QMainWindow):
             "random_delay_enabled": self.random_delay_checkbox.isChecked(),
             "random_delay_min": self.random_delay_min_spin.value(),
             "random_delay_max": self.random_delay_max_spin.value(),
-            # 【新增定时设置的保存】
             "timer_enabled": self.timer_checkbox.isChecked(),
             "timer_minutes": self.timer_spin.value()
         }
@@ -858,7 +854,6 @@ class AutoClickerApp(QMainWindow):
         self.random_delay_max_spin.setValue(config.get("random_delay_max", 1000))
         self.toggle_random_delay(Qt.Checked if random_delay_enabled else Qt.Unchecked)
         
-        # 【新增定时设置的加载还原】
         timer_enabled = config.get("timer_enabled", False)
         self.timer_checkbox.setChecked(timer_enabled)
         self.timer_spin.setValue(config.get("timer_minutes", 60))
@@ -945,7 +940,7 @@ class ExecutionThread(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
     step_completed = pyqtSignal(int)
-    loop_updated = pyqtSignal(int, int)
+    loop_updated = pyqtSignal(int, int) 
 
     def __init__(self, parent):
         super().__init__()
@@ -955,7 +950,6 @@ class ExecutionThread(QThread):
         self.is_stopped = False
         self.is_paused = False
         self.current_loop = 0
-        # 定时器相关参数
         self.timer_enabled = False
         self.timer_minutes = 0
         self.start_time = 0
@@ -975,11 +969,10 @@ class ExecutionThread(QThread):
     def stop(self): self.is_stopped = True
     def pause(self): 
         self.is_paused = True
-        self.pause_start_time = time.time() # 记录暂停时刻
+        self.pause_start_time = time.time() 
         
     def resume(self): 
         self.is_paused = False
-        # 扣除暂停的时间，保证定时停止依然是按实际运行时间计算
         self.start_time += time.time() - self.pause_start_time 
 
     def run(self):
@@ -989,7 +982,6 @@ class ExecutionThread(QThread):
                 return
             while (self.current_loop < self.loop_count or self.loop_count == 999999) and not self.is_stopped:
                 
-                # 【新增】：定时检测拦截
                 if self.timer_enabled:
                     elapsed_minutes = (time.time() - self.start_time) / 60.0
                     if elapsed_minutes >= self.timer_minutes:
@@ -1012,12 +1004,15 @@ class ExecutionThread(QThread):
                     try:
                         step = self.parent.steps[self.current_step_index]
                         target_pos = None
+                        
+                        # 【V2.1 针对纯坐标的强力修正】：如果这一步是纯坐标，根本就不去找图，直接返回坐标值
                         if step.step_type == 'image':
                             target_pos = self.find_image(step.image_path, step.similarity)
                             if target_pos and self.parent.target_hwnd:
                                 left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
                                 target_pos = (target_pos[0] + left, target_pos[1] + top)
                         else:
+                            # 纯坐标模式，直接使用预设的 x,y 坐标
                             target_pos = (step.x, step.y)
                             if self.parent.target_hwnd:
                                 left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
@@ -1048,8 +1043,12 @@ class ExecutionThread(QThread):
                     except Exception as step_error:
                         time.sleep(0.5)
 
+                # 【V2.1 轮次间强制缓冲】：解决第一轮跑到最后瞬间开启第二轮导致游戏漏掉坐标点击的问题
                 if not self.is_stopped:
                     self.current_step_index = 0
+                    # 每一轮彻底跑完后，强制给游戏 0.5 到 1 秒的喘息/画面刷新时间
+                    self._sleep_interruptible(random.uniform(0.5, 1.0))
+
             self.finished.emit()
             
         except Exception as e:
@@ -1076,8 +1075,6 @@ class ExecutionThread(QThread):
             bbox = (left, top, right, bottom)
             screen_image = ImageGrab.grab(bbox)
         else:
-            # 【核心死锁修复】：坚决禁止在子线程调用 Qt 的抓屏函数！
-            # 已替换为纯净无死锁隐患的 PIL 原生全屏抓取 ImageGrab.grab()
             screen_image = ImageGrab.grab()
 
         screenshot = cv2.cvtColor(np.array(screen_image), cv2.COLOR_RGB2GRAY)
@@ -1123,7 +1120,6 @@ class ExecutionThread(QThread):
                 self.parent.mouse.click(Button.left)
 
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
-        # 确保坐标非负
         x = max(0, int(x))
         y = max(0, int(y))
         lparam = win32api.MAKELONG(x, y)
@@ -1138,25 +1134,19 @@ class ExecutionThread(QThread):
             )
 
         try:
-            # 1. 模拟鼠标移入，激活悬停状态
             send_msg(win32con.WM_MOUSEMOVE, 0, lparam)
             time.sleep(random.uniform(0.02, 0.05))
             
-            # 2. 同步强制发送按下指令
             send_msg(down_msg, win32con.MK_LBUTTON, lparam)
             
-            # 3. 停留，给足游戏引擎处理帧的时间
             time.sleep(random.uniform(0.06, 0.12)) 
             
-            # 4. 同步强制发送抬起指令
             send_msg(up_msg, 0, lparam)
             time.sleep(0.01)
             
-            # 双重保险：再次发送抬起指令轰炸
             send_msg(up_msg, 0, lparam)
             
         finally:
-            # 5. 移开鼠标解除占用，并强制发送 WM_CANCELMODE (0x001F) 清除所有残留 UI 状态
             jitter_lparam = win32api.MAKELONG(x + 2, y + 2)
             send_msg(win32con.WM_MOUSEMOVE, 0, jitter_lparam)
             send_msg(0x001F, 0, 0) 
