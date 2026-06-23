@@ -28,21 +28,28 @@ jobs:
         pip install PyQt5 opencv-python numpy pynput pywin32 Pillow
         pip install pyinstaller
 
-    - name: Build with PyInstaller
-      run: pyinstaller -F -w main.py
+    # 在打包前自动通过正则匹配替换 Python 源码中的标题版本号
+    - name: Update Version in Python Script
+      shell: pwsh
+      run: |
+        $scriptPath = "AutoClicker.py" 
+        (Get-Content $scriptPath) -replace 'AutoClicker V1\.\d+', 'AutoClicker V1.${{ github.run_number }}' | Set-Content -Path $scriptPath -Encoding UTF8
 
-    # 【全自动命名开关】利用 github.run_number 自动获取当前构建次数
-    # 格式设置为 v1.流水号。例如第15次更新代码，就会自动命名为 AutoClicker_Build_v1.15.exe
+    # 打包指定的 AutoClicker.py
+    - name: Build with PyInstaller
+      run: pyinstaller -F -w AutoClicker.py
+
+    # 自动重命名打包后的文件，使最终用户下载的 exe 名称携带最新的版本号
     - name: Rename Executable
       shell: pwsh
       run: |
-        Rename-Item -Path "dist\main.exe" -NewName "AutoClicker_Build_v1.${{ github.run_number }}.exe"
+        Rename-Item -Path "dist\AutoClicker.exe" -NewName "AutoClicker_V1.${{ github.run_number }}.exe"
 
-    # 【自动发布开关】发行版的标题和文件也会全自动匹配上面的版本号
+    # 全自动发布
     - name: Create Release and Upload Asset
       uses: softprops/action-gh-release@v2
       with:
         tag_name: build-${{ github.run_number }}
-        name: "自动点击器 (自动构建版 v1.${{ github.run_number }})"
-        body: "这是由 GitHub Actions 全自动打包的最新 Windows 执行文件。版本号已随本次代码更新自动递增。"
-        files: dist/AutoClicker_Build_v1.${{ github.run_number }}.exe
+        name: "AutoClicker V1.${{ github.run_number }}"
+        body: "这是由 GitHub Actions 全自动打包的最新 Windows 执行文件。软件界面标题和执行文件名均已随本次提交自动同步至 V1.${{ github.run_number }}。"
+        files: dist/*.exe
