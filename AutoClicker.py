@@ -9,6 +9,7 @@ import ctypes
 import win32gui
 import win32con
 import win32api
+import logging
 from PIL import ImageGrab
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
@@ -74,6 +75,9 @@ class AutoClickerApp(QMainWindow):
         self.screenshot_dir = os.path.join(self.base_dir, "screenshots")
         os.makedirs(self.screenshot_dir, exist_ok=True)
 
+        # 初始化日志系统
+        self.setup_logger()
+
         self.mouse_listener = None
         self.keyboard_listener = None
         self.global_hotkey_listener = None
@@ -102,6 +106,16 @@ class AutoClickerApp(QMainWindow):
         self.master_timer = QTimer(self)
         self.master_timer.timeout.connect(self.on_master_timer_tick)
         self.master_timer.start(1000)
+
+    def setup_logger(self):
+        self.logger = logging.getLogger("AutoClicker")
+        self.logger.setLevel(logging.DEBUG)
+        for handler in self.logger.handlers[:]:
+            self.logger.removeHandler(handler)
+        self.log_file = os.path.join(self.base_dir, "autoclicker_debug.log")
+        fh = logging.FileHandler(self.log_file, encoding='utf-8')
+        fh.setFormatter(logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s'))
+        self.logger.addHandler(fh)
 
     def init_ui(self):
         font = QFont("Microsoft YaHei", 10)
@@ -293,6 +307,18 @@ class AutoClickerApp(QMainWindow):
         hotkey_group.setLayout(hotkey_layout)
         left_layout.addWidget(hotkey_group)
 
+        # 【新增】调试与日志开关组
+        debug_group = QGroupBox("调试与日志")
+        debug_layout = QHBoxLayout()
+        self.log_checkbox = QCheckBox("📝 启用运行日志 (排查卡顿专用)")
+        self.log_checkbox.setChecked(False)
+        self.open_log_btn = QPushButton("📂 打开日志文件")
+        self.open_log_btn.clicked.connect(self.open_log_file)
+        debug_layout.addWidget(self.log_checkbox)
+        debug_layout.addWidget(self.open_log_btn)
+        debug_group.setLayout(debug_layout)
+        left_layout.addWidget(debug_group)
+
         left_layout.addStretch()
         
         left_scroll.setWidget(left_widget)
@@ -386,6 +412,13 @@ class AutoClickerApp(QMainWindow):
         main_layout.addWidget(main_splitter)
         self.setCentralWidget(main_widget)
 
+    def open_log_file(self):
+        """【新增】一键打开生成的日志文件"""
+        if os.path.exists(self.log_file):
+            os.startfile(self.log_file)
+        else:
+            QMessageBox.information(self, "提示", "尚未生成日志文件！请先勾选日志开关并执行一次工具。")
+
     def on_master_timer_tick(self):
         now_dt = QDateTime.currentDateTime()
         now_time = now_dt.time()
@@ -425,6 +458,17 @@ class AutoClickerApp(QMainWindow):
         for control in controls:
             control.setEnabled(enabled)
 
+    def set_runtime_settings_enabled(self, enabled):
+        self.radio_infinite.setEnabled(enabled)
+        self.radio_count.setEnabled(enabled)
+        self.loop_spin.setEnabled(enabled)
+        self.offset_checkbox.setEnabled(enabled)
+        self.offset_x_spin.setEnabled(enabled)
+        self.offset_y_spin.setEnabled(enabled)
+        self.random_delay_checkbox.setEnabled(enabled)
+        self.random_delay_min_spin.setEnabled(enabled)
+        self.random_delay_max_spin.setEnabled(enabled)
+
     def setup_global_hotkey(self):
         try:
             if self.global_hotkey_listener:
@@ -435,7 +479,7 @@ class AutoClickerApp(QMainWindow):
             )
             self.global_hotkey_listener.start()
         except Exception as e:
-            print(f"全局热键设置失败: {str(e)}")
+            pass
 
     def parse_hotkey_string(self, hotkey_str):
         keys = []
@@ -657,15 +701,23 @@ class AutoClickerApp(QMainWindow):
             self.execution_thread.pause()
             self.start_btn.setEnabled(True)
             self.pause_btn.setText("▶ 继续执行")
-            self.status_label.setText("执行进度: 任务已暂停")
+            self.status_label.setText("执行进度: 任务已暂停 (可修改左侧循环设置)")
+            
+            self.set_runtime_settings_enabled(True)
+            
         elif self.is_paused:
             self.update_all_settings()
+            
+            self.execution_thread.loop_count = self.get_loop_count()
+
             self.is_paused = False
             self.is_running = True
             self.execution_thread.resume()
             self.start_btn.setEnabled(False)
             self.pause_btn.setText("⏸ 暂停执行")
             self.status_label.setText("执行进度: 任务已恢复")
+            
+            self.set_runtime_settings_enabled(False)
 
     def update_all_settings(self):
         for step in self.steps:
@@ -699,7 +751,6 @@ class AutoClickerApp(QMainWindow):
         self.status_label.setText("执行进度: 发生错误而停止")
         QMessageBox.critical(self, "错误", f"执行出错: {error_msg}")
 
-    # 【新增反馈】同时获取到了当前正在执行的轮次并显示
     def on_step_completed(self, step_index, current_loop):
         self.current_step_index = step_index
         self.steps_table.selectRow(step_index)
@@ -959,10 +1010,73 @@ class AutoClickerApp(QMainWindow):
         if self.keyboard_listener: self.keyboard_listener.stop()
         event.accept()
 
+class ScreenshotWindow(QWidget):
+    image_captured = pyqtSignal(str)
+    closed = pyqtSignal()
+    def __init__(self, parent=None):
+        super().__init__()
+        self.parent = parent
+        self.setWindowTitle("截图")
+        self.setWindowState(Qt.WindowFullScreen)
+        self.setWindowOpacity(0.3)
+        self.setMouseTracking(True)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.start_pos = None
+        self.end_pos = None
+        self.is_selecting = False
+        self.shortcut_esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self.shortcut_esc.activated.connect(self.cancel_screenshot)
+
+    def cancel_screenshot(self):
+        self.close()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.start_pos = event.pos()
+            self.is_selecting = True
+        elif event.button() == Qt.RightButton:
+            self.cancel_screenshot()
+
+    def mouseMoveEvent(self, event):
+        if self.is_selecting:
+            self.end_pos = event.pos()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.is_selecting:
+            self.is_selecting = False
+            self.end_pos = event.pos()
+            x = min(self.start_pos.x(), self.end_pos.x())
+            y = min(self.start_pos.y(), self.end_pos.y())
+            width = abs(self.start_pos.x() - self.end_pos.x())
+            height = abs(self.start_pos.y() - self.end_pos.y())
+            screen = QApplication.primaryScreen()
+            pixmap = screen.grabWindow(0, x, y, width, height)
+            image_path = os.path.join(self.parent.screenshot_dir, f"screenshot_{int(time.time())}.png")
+            pixmap.save(image_path)
+            self.image_captured.emit(image_path)
+            self.close()
+
+    def paintEvent(self, event):
+        if self.is_selecting and self.start_pos and self.end_pos:
+            painter = QPainter(self)
+            painter.setPen(QPen(Qt.red, 2, Qt.DashLine))
+            x = min(self.start_pos.x(), self.end_pos.x())
+            y = min(self.start_pos.y(), self.end_pos.y())
+            width = abs(self.start_pos.x() - self.end_pos.x())
+            height = abs(self.start_pos.y() - self.end_pos.y())
+            painter.drawRect(x, y, width, height)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape: self.cancel_screenshot()
+
+    def closeEvent(self, event):
+        self.closed.emit()
+        event.accept()
+
 class ExecutionThread(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
-    # 【更新1】信号结构升级：增加一个参数传递当前是“第几轮”
     step_completed = pyqtSignal(int, int)
 
     def __init__(self, parent):
@@ -985,57 +1099,102 @@ class ExecutionThread(QThread):
     def pause(self): self.is_paused = True
     def resume(self): self.is_paused = False
 
+    # 【新增】日志输出核心桥接方法
+    def log(self, message, level="INFO"):
+        if hasattr(self.parent, 'log_checkbox') and self.parent.log_checkbox.isChecked():
+            if level == "INFO":
+                self.parent.logger.info(message)
+            elif level == "DEBUG":
+                self.parent.logger.debug(message)
+            elif level == "ERROR":
+                self.parent.logger.error(message)
+            print(f"[{level}] {message}") # 终端同步打印
+
     def run(self):
         try:
             if not self.parent.steps:
+                self.log("步骤列表为空，退出执行", "ERROR")
                 self.finished.emit()
                 return
+                
+            self.log(f"=== 开始总任务，设定循环总数: {self.loop_count} ===")
+            
             while (self.current_loop < self.loop_count or self.loop_count == 999999) and not self.is_stopped:
                 self.current_loop += 1
+                self.log(f"\n--- 进入第 {self.current_loop} 轮循环 ---")
+                
                 while self.current_step_index < len(self.parent.steps) and not self.is_stopped:
-                    while self.is_paused and not self.is_stopped: time.sleep(0.1)
-                    if self.is_stopped or self.current_step_index >= len(self.parent.steps): break
+                    while self.is_paused and not self.is_stopped: 
+                        time.sleep(0.1)
+                        
+                    if self.is_stopped or self.current_step_index >= len(self.parent.steps): 
+                        break
                     
-                    # 【更新2】将当前正在执行的轮数传给 UI
                     self.step_completed.emit(self.current_step_index, self.current_loop)
 
                     step = self.parent.steps[self.current_step_index]
+                    self.log(f"[第 {self.current_loop} 轮] 准备执行 步骤 {self.current_step_index + 1} (类型: {step.step_type})")
+                    
                     target_pos = None
                     if step.step_type == 'image':
+                        self.log(f"开始查找图片: {step.image_path} (相似度要求: {step.similarity})", "DEBUG")
                         target_pos = self.find_image(step.image_path, step.similarity)
-                        if target_pos and self.parent.target_hwnd:
-                            left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
-                            target_pos = (target_pos[0] + left, target_pos[1] + top)
+                        if target_pos:
+                            self.log(f"图片匹配成功，找到相对坐标: {target_pos}", "DEBUG")
+                            if self.parent.target_hwnd:
+                                left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
+                                target_pos = (target_pos[0] + left, target_pos[1] + top)
+                                self.log(f"换算为绝对坐标: {target_pos}", "DEBUG")
+                        else:
+                            self.log("图片匹配失败，未找到目标", "DEBUG")
                     else:
                         target_pos = (step.x, step.y)
+                        self.log(f"使用固定坐标: {target_pos}", "DEBUG")
                         if self.parent.target_hwnd:
                             left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
                             target_pos = (target_pos[0] + left, target_pos[1] + top)
 
                     total_wait = step.wait_time
                     if step.accept_random_delay and step.random_delay_enabled:
-                        total_wait += random.randint(step.random_delay_min, step.random_delay_max)
+                        rand_extra = random.randint(step.random_delay_min, step.random_delay_max)
+                        total_wait += rand_extra
+                        self.log(f"叠加随机延迟: +{rand_extra}ms，总等待时长为: {total_wait}ms", "DEBUG")
+                    else:
+                        self.log(f"设定等待时长为: {total_wait}ms", "DEBUG")
 
                     if step.step_type == 'image' and step.click_type == 'jump':
                         if target_pos is not None and step.jump_to is not None:
+                            self.log(f"执行跳转逻辑 -> 跳转至步骤 {step.jump_to + 1}")
                             self.current_step_index = step.jump_to
                             self._sleep_interruptible(total_wait / 1000.0)
                             continue
 
                     if target_pos is not None and step.click_type != 'jump':
+                        self.log(f"发起点击操作 -> 坐标 {target_pos}，类型: {step.click_type}")
                         self.click_target(target_pos, step)
                     elif target_pos is None and step.click_type != 'jump':
-                        print(f"步骤 {self.current_step_index + 1}: 未找到目标，跳过")
+                        self.log(f"⚠️ 步骤 {self.current_step_index + 1}: 目标不存在，直接跳过点击环节", "WARNING")
 
+                    self.log(f"开始休眠等待 {total_wait}ms...")
                     self._sleep_interruptible(total_wait / 1000.0)
 
                     if step.click_type != 'jump' or (step.click_type == 'jump' and target_pos is None):
+                        self.log(f"步骤 {self.current_step_index + 1} 执行完毕。")
                         self.current_step_index += 1
                     
                 if not self.is_stopped:
+                    self.log(f"--- 第 {self.current_loop} 轮循环执行完毕 ---")
                     self.current_step_index = 0
+                    
+                    # 【核心保护】加一个 0.2 秒的轮次切换保护，防止跨轮次的第一步过快被判定为机器操作
+                    if self.current_loop < self.loop_count or self.loop_count == 999999:
+                        self.log("进入下一轮前保护性休眠缓冲 200ms...", "DEBUG")
+                        self._sleep_interruptible(0.2)
+                        
+            self.log("=== 总任务全部完成 ===")
             self.finished.emit()
         except Exception as e:
+            self.log(f"发生崩溃级异常: {str(e)}", "ERROR")
             self.error.emit(str(e))
 
     def _sleep_interruptible(self, seconds):
@@ -1083,9 +1242,13 @@ class ExecutionThread(QThread):
         if step.accept_offset and self.parent.offset_checkbox.isChecked():
             x += random.randint(-self.parent.offset_x_spin.value(), self.parent.offset_x_spin.value())
             y += random.randint(-self.parent.offset_y_spin.value(), self.parent.offset_y_spin.value())
+            self.log(f"应用坐标偏移，最终点击绝对坐标: ({x}, {y})", "DEBUG")
+            
         if self.parent.target_hwnd:
             left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
             rel_x, rel_y = x - left, y - top
+            self.log(f"向句柄发送后台点击指令 -> 相对坐标: ({rel_x}, {rel_y})", "DEBUG")
+            
             if step.click_type == 'left': down_msg, up_msg = win32con.WM_LBUTTONDOWN, win32con.WM_LBUTTONUP
             elif step.click_type == 'right': down_msg, up_msg = win32con.WM_RBUTTONDOWN, win32con.WM_RBUTTONUP
             elif step.click_type == 'double':
@@ -1105,27 +1268,17 @@ class ExecutionThread(QThread):
                 time.sleep(0.05)
                 self.parent.mouse.click(Button.left)
 
-    # 【更新3】重写底层点击方法：采用 PostMessage 异步发送，并在每次点击前伪造鼠标悬停位置
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         try:
-            # 严格转为 int 防止传入 float 导致负坐标异常
             lparam = win32api.MAKELONG(int(x), int(y))
-            
-            # 核心防卡逻辑 1：发送鼠标移动，强行让游戏引擎捕获鼠标已经到了这个坐标
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
             time.sleep(0.02)
-            
-            # 核心防卡逻辑 2：发送按下的信号
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-            
-            # 核心防卡逻辑 3：延长鼠标停留时间跨越小游戏渲染帧，防止按太快被当成干扰丢包
             time.sleep(0.05) 
-            
-            # 核心防卡逻辑 4：发送抬起信号
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            
+            self.log(f"PostMessage 后台指令组发送完毕", "DEBUG")
         except Exception as e:
-            pass
+            self.log(f"PostMessage 发送失败: {str(e)}", "ERROR")
 
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
