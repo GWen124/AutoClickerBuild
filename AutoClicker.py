@@ -58,7 +58,6 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        # 窗口标题设定（此处版本号将由 GitHub Actions 自动更新）
         self.setWindowTitle("AutoClicker V1.3")
         self.setMinimumSize(1000, 700)
         self.resize(1200, 800)
@@ -84,7 +83,6 @@ class AutoClickerApp(QMainWindow):
         self.keyboard = KeyboardController()
         self.hotkey = "F12"
 
-        # 定时器相关变量记录
         self.execution_start_time = None
         self.last_stop_time = None
 
@@ -101,7 +99,6 @@ class AutoClickerApp(QMainWindow):
         self.stop_select_window_mode_signal.connect(self.stop_select_window_mode)
         self.screenshot_closed.connect(self.on_screenshot_closed)
 
-        # 启动全局主时钟，用于定时触发检查（每秒执行一次）
         self.master_timer = QTimer(self)
         self.master_timer.timeout.connect(self.on_master_timer_tick)
         self.master_timer.start(1000)
@@ -117,7 +114,6 @@ class AutoClickerApp(QMainWindow):
 
         main_splitter = QSplitter(Qt.Horizontal)
 
-        # 彻底解决高度或宽度不够造成的挤压
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setMinimumWidth(380)
@@ -127,7 +123,6 @@ class AutoClickerApp(QMainWindow):
         left_layout = QVBoxLayout(left_widget)
         left_layout.setSpacing(10)
 
-        # 状态与配置显示
         status_group = QGroupBox("当前状态")
         status_layout = QVBoxLayout()
         self.config_name_label = QLabel("当前配置: 未加载")
@@ -158,7 +153,6 @@ class AutoClickerApp(QMainWindow):
         control_group.setLayout(control_layout)
         left_layout.addWidget(control_group)
 
-        # 定时与周期任务
         timing_group = QGroupBox("定时与周期任务 (自动停止/启动)")
         timing_layout = QVBoxLayout()
 
@@ -301,7 +295,6 @@ class AutoClickerApp(QMainWindow):
 
         left_layout.addStretch()
         
-        # 将左侧所有控件包装进滚动视图
         left_scroll.setWidget(left_widget)
 
         right_widget = QWidget()
@@ -394,25 +387,21 @@ class AutoClickerApp(QMainWindow):
         self.setCentralWidget(main_widget)
 
     def on_master_timer_tick(self):
-        """全局时钟检测：处理定时启动、定时关闭和周期启动"""
         now_dt = QDateTime.currentDateTime()
         now_time = now_dt.time()
 
-        # 1. 定时启动检查
         if self.schedule_start_cb.isChecked() and not self.is_running:
             target_time = self.schedule_start_time.time()
             if now_time.hour() == target_time.hour() and now_time.minute() == target_time.minute() and now_time.second() == target_time.second():
                 self.schedule_start_cb.setChecked(False) 
                 self.start_execution()
 
-        # 2. 定时关闭检查
         if self.schedule_stop_cb.isChecked() and self.is_running and self.execution_start_time:
             elapsed_mins = self.execution_start_time.secsTo(now_dt) / 60.0
             if elapsed_mins >= self.schedule_stop_spin.value():
                 self.stop_execution()
                 self.status_label.setText("执行进度: 因到达【定时关闭】时间而停止")
 
-        # 3. 周期启动检查
         if self.periodic_start_cb.isChecked() and not self.is_running and self.last_stop_time:
             elapsed_mins = self.last_stop_time.secsTo(now_dt) / 60.0
             if elapsed_mins >= self.periodic_start_spin.value():
@@ -710,10 +699,11 @@ class AutoClickerApp(QMainWindow):
         self.status_label.setText("执行进度: 发生错误而停止")
         QMessageBox.critical(self, "错误", f"执行出错: {error_msg}")
 
-    def on_step_completed(self, step_index):
+    # 【新增反馈】同时获取到了当前正在执行的轮次并显示
+    def on_step_completed(self, step_index, current_loop):
         self.current_step_index = step_index
         self.steps_table.selectRow(step_index)
-        self.status_label.setText(f"执行进度: 正在执行第 {step_index + 1} 步")
+        self.status_label.setText(f"执行进度: [第 {current_loop} 轮] 正在执行第 {step_index + 1} 步")
 
     def on_image_captured(self, image_path):
         if self.target_hwnd:
@@ -969,74 +959,11 @@ class AutoClickerApp(QMainWindow):
         if self.keyboard_listener: self.keyboard_listener.stop()
         event.accept()
 
-class ScreenshotWindow(QWidget):
-    image_captured = pyqtSignal(str)
-    closed = pyqtSignal()
-    def __init__(self, parent=None):
-        super().__init__()
-        self.parent = parent
-        self.setWindowTitle("截图")
-        self.setWindowState(Qt.WindowFullScreen)
-        self.setWindowOpacity(0.3)
-        self.setMouseTracking(True)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.start_pos = None
-        self.end_pos = None
-        self.is_selecting = False
-        self.shortcut_esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
-        self.shortcut_esc.activated.connect(self.cancel_screenshot)
-
-    def cancel_screenshot(self):
-        self.close()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.start_pos = event.pos()
-            self.is_selecting = True
-        elif event.button() == Qt.RightButton:
-            self.cancel_screenshot()
-
-    def mouseMoveEvent(self, event):
-        if self.is_selecting:
-            self.end_pos = event.pos()
-            self.update()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self.is_selecting:
-            self.is_selecting = False
-            self.end_pos = event.pos()
-            x = min(self.start_pos.x(), self.end_pos.x())
-            y = min(self.start_pos.y(), self.end_pos.y())
-            width = abs(self.start_pos.x() - self.end_pos.x())
-            height = abs(self.start_pos.y() - self.end_pos.y())
-            screen = QApplication.primaryScreen()
-            pixmap = screen.grabWindow(0, x, y, width, height)
-            image_path = os.path.join(self.parent.screenshot_dir, f"screenshot_{int(time.time())}.png")
-            pixmap.save(image_path)
-            self.image_captured.emit(image_path)
-            self.close()
-
-    def paintEvent(self, event):
-        if self.is_selecting and self.start_pos and self.end_pos:
-            painter = QPainter(self)
-            painter.setPen(QPen(Qt.red, 2, Qt.DashLine))
-            x = min(self.start_pos.x(), self.end_pos.x())
-            y = min(self.start_pos.y(), self.end_pos.y())
-            width = abs(self.start_pos.x() - self.end_pos.x())
-            height = abs(self.start_pos.y() - self.end_pos.y())
-            painter.drawRect(x, y, width, height)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape: self.cancel_screenshot()
-
-    def closeEvent(self, event):
-        self.closed.emit()
-        event.accept()
-
 class ExecutionThread(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
-    step_completed = pyqtSignal(int)
+    # 【更新1】信号结构升级：增加一个参数传递当前是“第几轮”
+    step_completed = pyqtSignal(int, int)
 
     def __init__(self, parent):
         super().__init__()
@@ -1069,7 +996,8 @@ class ExecutionThread(QThread):
                     while self.is_paused and not self.is_stopped: time.sleep(0.1)
                     if self.is_stopped or self.current_step_index >= len(self.parent.steps): break
                     
-                    self.step_completed.emit(self.current_step_index)
+                    # 【更新2】将当前正在执行的轮数传给 UI
+                    self.step_completed.emit(self.current_step_index, self.current_loop)
 
                     step = self.parent.steps[self.current_step_index]
                     target_pos = None
@@ -1177,11 +1105,27 @@ class ExecutionThread(QThread):
                 time.sleep(0.05)
                 self.parent.mouse.click(Button.left)
 
+    # 【更新3】重写底层点击方法：采用 PostMessage 异步发送，并在每次点击前伪造鼠标悬停位置
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
-        lparam = win32api.MAKELONG(x, y)
-        win32gui.SendMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-        time.sleep(0.01)
-        win32gui.SendMessage(hwnd, up_msg, 0, lparam)
+        try:
+            # 严格转为 int 防止传入 float 导致负坐标异常
+            lparam = win32api.MAKELONG(int(x), int(y))
+            
+            # 核心防卡逻辑 1：发送鼠标移动，强行让游戏引擎捕获鼠标已经到了这个坐标
+            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
+            time.sleep(0.02)
+            
+            # 核心防卡逻辑 2：发送按下的信号
+            win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
+            
+            # 核心防卡逻辑 3：延长鼠标停留时间跨越小游戏渲染帧，防止按太快被当成干扰丢包
+            time.sleep(0.05) 
+            
+            # 核心防卡逻辑 4：发送抬起信号
+            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
+            
+        except Exception as e:
+            pass
 
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
