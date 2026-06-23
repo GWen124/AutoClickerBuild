@@ -277,7 +277,7 @@ class AutoClickerApp(QMainWindow):
         left_layout.addStretch()
         left_widget.setLayout(left_layout)
 
-        # ---------------- 右侧主区域 ----------------
+        # ---------------- Right Area ----------------
         right_widget = QWidget()
         right_layout = QVBoxLayout()
         right_layout.setSpacing(10)
@@ -341,9 +341,9 @@ class AutoClickerApp(QMainWindow):
         self.steps_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.steps_table.setAlternatingRowColors(True)
         self.steps_table.setStyleSheet(
-            "QTableWidget { gridline-color: #ddd; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; }"
-            "QTableWidget::item { padding: 6px 4px; min-height: 20px; text-align: center; }"
-            "QTableWidget::item:selected { background-color: #e3f2fd; }"
+            "QTableWidget { gridline-color: #ddd; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; }\n"
+            "QTableWidget::item { padding: 6px 4px; min-height: 20px; text-align: center; }\n"
+            "QTableWidget::item:selected { background-color: #e3f2fd; }\n"
             "QHeaderView::section { background-color: #f0f0f0; padding: 6px; border: 1px solid #ddd; font-weight: bold; text-align: center; }"
         )
         self.steps_table.verticalHeader().setDefaultSectionSize(35)
@@ -660,7 +660,6 @@ class AutoClickerApp(QMainWindow):
         total_loop = self.get_loop_count()
         loop_str = "无限" if total_loop == 999999 else str(total_loop)
         
-        # 实时同步状态栏，清楚地显示当步要等待的时间，消除视觉卡死感
         if step_index < total_steps:
             self.steps_table.selectRow(step_index)
             wait_sec = wait_time_ms / 1000.0
@@ -1180,7 +1179,6 @@ class ExecutionThread(QThread):
                         if step.accept_random_delay and step.random_delay_enabled:
                             total_wait += random.randint(step.random_delay_min, step.random_delay_max)
 
-                        # 在点击并等待前，立马将 UI 更新为“正在等待此步”
                         self.step_started.emit(self.current_step_index, self.current_loop, total_wait)
 
                         target_pos = None
@@ -1329,7 +1327,7 @@ class ExecutionThread(QThread):
                 self.parent.mouse.click(Button.left)
 
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
-        # 针对模拟器偶尔漏发的第一步指令，前置一个 WM_MOUSEMOVE 定位防吃帧
+        # 防死锁保护：点击前鼠标悬停一下，防止游戏因瞬发点击吞信号
         lparam = win32api.MAKELONG(x, y)
         win32gui.SendMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
         time.sleep(0.01)
@@ -1347,3 +1345,8 @@ if __name__ == "__main__":
     window = AutoClickerApp()
     window.show()
     sys.exit(app.exec_())
+"""
+
+with open("main.py", "w", encoding="utf-8") as f:
+    f.write(code_content)
+print("File successfully updated code to main.py via interpreter.")}
