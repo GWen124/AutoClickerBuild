@@ -75,7 +75,6 @@ class AutoClickerApp(QMainWindow):
         self.screenshot_dir = os.path.join(self.base_dir, "screenshots")
         os.makedirs(self.screenshot_dir, exist_ok=True)
 
-        # 初始化日志系统
         self.setup_logger()
 
         self.mouse_listener = None
@@ -307,7 +306,6 @@ class AutoClickerApp(QMainWindow):
         hotkey_group.setLayout(hotkey_layout)
         left_layout.addWidget(hotkey_group)
 
-        # 【新增】调试与日志开关组
         debug_group = QGroupBox("调试与日志")
         debug_layout = QHBoxLayout()
         self.log_checkbox = QCheckBox("📝 启用运行日志 (排查卡顿专用)")
@@ -413,7 +411,6 @@ class AutoClickerApp(QMainWindow):
         self.setCentralWidget(main_widget)
 
     def open_log_file(self):
-        """【新增】一键打开生成的日志文件"""
         if os.path.exists(self.log_file):
             os.startfile(self.log_file)
         else:
@@ -1099,7 +1096,6 @@ class ExecutionThread(QThread):
     def pause(self): self.is_paused = True
     def resume(self): self.is_paused = False
 
-    # 【新增】日志输出核心桥接方法
     def log(self, message, level="INFO"):
         if hasattr(self.parent, 'log_checkbox') and self.parent.log_checkbox.isChecked():
             if level == "INFO":
@@ -1108,7 +1104,7 @@ class ExecutionThread(QThread):
                 self.parent.logger.debug(message)
             elif level == "ERROR":
                 self.parent.logger.error(message)
-            print(f"[{level}] {message}") # 终端同步打印
+            print(f"[{level}] {message}")
 
     def run(self):
         try:
@@ -1186,10 +1182,10 @@ class ExecutionThread(QThread):
                     self.log(f"--- 第 {self.current_loop} 轮循环执行完毕 ---")
                     self.current_step_index = 0
                     
-                    # 【核心保护】加一个 0.2 秒的轮次切换保护，防止跨轮次的第一步过快被判定为机器操作
+                    # 【加固保护】：增加轮次切换间隔到 500ms
                     if self.current_loop < self.loop_count or self.loop_count == 999999:
-                        self.log("进入下一轮前保护性休眠缓冲 200ms...", "DEBUG")
-                        self._sleep_interruptible(0.2)
+                        self.log("进入下一轮前保护性休眠缓冲 500ms...", "DEBUG")
+                        self._sleep_interruptible(0.5)
                         
             self.log("=== 总任务全部完成 ===")
             self.finished.emit()
@@ -1268,15 +1264,30 @@ class ExecutionThread(QThread):
                 time.sleep(0.05)
                 self.parent.mouse.click(Button.left)
 
+    # 【终极防卡死重构】完美模拟人类真实点击流程
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         try:
             lparam = win32api.MAKELONG(int(x), int(y))
+            
+            # 第一防线：先发一个抬起指令，防止上一步游戏引擎丢包导致假长按
+            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
+            time.sleep(0.01)
+
+            # 第二防线：鼠标移动过去，且给引擎 50 毫秒的时间响应悬停状态
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-            time.sleep(0.02)
+            time.sleep(0.05) 
+            
+            # 正常点击（按、抬）
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
             time.sleep(0.05) 
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            self.log(f"PostMessage 后台指令组发送完毕", "DEBUG")
+            
+            # 第三防线：【最重要】点击完成后，光速把虚拟鼠标“抽走”到边缘(1,1)
+            # 这样保证下一轮开始时，引擎能感受到“鼠标重新移入”的触发，彻底告别假死！
+            time.sleep(0.02)
+            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(1, 1))
+            
+            self.log(f"PostMessage 发送完毕 (已重置防卡死悬停点)", "DEBUG")
         except Exception as e:
             self.log(f"PostMessage 发送失败: {str(e)}", "ERROR")
 
