@@ -10,12 +10,35 @@ import win32gui
 import win32con
 import win32api
 import logging
+import traceback
 from PIL import ImageGrab
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from pynput.mouse import Controller as MouseController, Listener as MouseListener, Button
 from pynput.keyboard import Controller as KeyboardController, Listener as KeyboardListener, Key
+
+# 【终极防闪退】：全局异常可视化拦截，软件绝不再悄无声息地消失
+def global_exception_handler(exc_type, exc_value, exc_tb):
+    try:
+        # 1. 写入本地崩溃日志
+        with open("autoclicker_crash.txt", "w", encoding="utf-8") as f:
+            f.write("=== AutoClicker 发生严重崩溃 ===\n")
+            traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+        
+        # 2. 弹窗警告用户（不再静默秒退）
+        app = QApplication.instance()
+        if app:
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Critical)
+            msg.setWindowTitle("致命错误拦截")
+            msg.setText(f"程序发生崩溃，但已被拦截！\n\n错误类型: {exc_type.__name__}\n错误详情: {exc_value}\n\n详细崩溃日志已保存至同目录下的 autoclicker_crash.txt")
+            msg.exec_()
+    except:
+        pass
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+sys.excepthook = global_exception_handler
 
 # 设置 DPI 感知 (Windows 专属)
 try:
@@ -49,7 +72,9 @@ class AutoClickerApp(QMainWindow):
     coordinate_captured = pyqtSignal(int, int)
     stop_coordinate_mode = pyqtSignal()
     stop_select_window_mode_signal = pyqtSignal()
+    window_selected = pyqtSignal(int, str)
     screenshot_closed = pyqtSignal()
+    hotkey_triggered = pyqtSignal()
 
     def get_base_path(self):
         if getattr(sys, 'frozen', False):
@@ -71,7 +96,6 @@ class AutoClickerApp(QMainWindow):
         self.is_selecting_window = False
         self.is_adding_image = False
         
-        # 【新增】防闪退：预加载安全的多线程传递变量
         self.offset_enabled = False
         self.offset_x = 5
         self.offset_y = 5
@@ -106,7 +130,9 @@ class AutoClickerApp(QMainWindow):
         self.coordinate_captured.connect(self.on_coordinate_captured)
         self.stop_coordinate_mode.connect(self.stop_add_coordinate_mode)
         self.stop_select_window_mode_signal.connect(self.stop_select_window_mode)
+        self.window_selected.connect(self.on_window_selected)
         self.screenshot_closed.connect(self.on_screenshot_closed)
+        self.hotkey_triggered.connect(self.toggle_execution)
 
         self.master_timer = QTimer(self)
         self.master_timer.timeout.connect(self.on_master_timer_tick)
@@ -316,7 +342,6 @@ class AutoClickerApp(QMainWindow):
         debug_layout = QHBoxLayout()
         self.log_checkbox = QCheckBox("📝 启用运行日志")
         self.log_checkbox.setChecked(False)
-        # 实时同步日志开关，防止跨线程读取闪退
         self.log_checkbox.stateChanged.connect(lambda state: setattr(self, 'log_enabled', state == Qt.Checked))
         self.open_log_btn = QPushButton("📂 打开日志文件")
         self.open_log_btn.clicked.connect(self.open_log_file)
@@ -509,7 +534,7 @@ class AutoClickerApp(QMainWindow):
                         self.keyboard.shift_pressed
                         for m in target_keys[:-1]
                     ):
-                        QTimer.singleShot(0, self.toggle_execution)
+                        self.hotkey_triggered.emit()
             else:
                 if key == target_keys[-1]:
                     if all(
@@ -518,7 +543,7 @@ class AutoClickerApp(QMainWindow):
                         self.keyboard.shift_pressed
                         for m in target_keys[:-1]
                     ):
-                        QTimer.singleShot(0, self.toggle_execution)
+                        self.hotkey_triggered.emit()
         except:
             pass
         return True
@@ -538,12 +563,15 @@ class AutoClickerApp(QMainWindow):
             hwnd = win32gui.WindowFromPoint((x, y))
             while win32gui.GetParent(hwnd) != 0:
                 hwnd = win32gui.GetParent(hwnd)
-            self.target_hwnd = hwnd
             window_title = win32gui.GetWindowText(hwnd)
-            self.window_title_edit.setText(f"{window_title} (HWND: {hwnd})")
+            self.window_selected.emit(hwnd, window_title)
             self.stop_select_window_mode_signal.emit()
             return False
         return True
+        
+    def on_window_selected(self, hwnd, title):
+        self.target_hwnd = hwnd
+        self.window_title_edit.setText(f"{title} (HWND: {hwnd})")
 
     def on_select_window_cancel(self, key):
         if key == Key.esc:
@@ -660,8 +688,8 @@ class AutoClickerApp(QMainWindow):
         if not self.steps:
             QMessageBox.warning(self, "错误", "没有可执行的步骤")
             return
+            
         self.update_all_settings()
-
         self.execution_start_time = QDateTime.currentDateTime()
         self.last_stop_time = None
 
@@ -690,6 +718,7 @@ class AutoClickerApp(QMainWindow):
         self.is_paused = False
         self.current_step_index = 0
         self.execution_thread.stop()
+        
         self.set_controls_enabled(True)
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -704,21 +733,16 @@ class AutoClickerApp(QMainWindow):
             self.is_paused = True
             self.is_running = False
             self.execution_thread.pause()
+            
             self.start_btn.setEnabled(True)
             self.pause_btn.setText("▶ 继续执行")
             self.status_label.setText("执行进度: 任务已暂停 (可修改左侧循环设置)")
-            
             self.set_runtime_settings_enabled(True)
             
         elif self.is_paused:
-            # 1. 把所有前台界面配置同步到底层安全变量
             self.update_all_settings()
             
-            # 2. 抓取新的目标循环次数
             new_loop_count = self.get_loop_count()
-            
-            # 【修复逻辑秒停问题】：如果中途把循环改为有限次数，并且已经跑过的轮数超过了这个目标次数
-            # 直接将当前跑的轮数清零。这样它就会老老实实再帮你跑 `new_loop_count` 次。
             if new_loop_count != 999999 and self.execution_thread.current_loop >= new_loop_count:
                 self.execution_thread.current_loop = 0
                 
@@ -726,11 +750,13 @@ class AutoClickerApp(QMainWindow):
 
             self.is_paused = False
             self.is_running = True
+            
+            # 【修复致命核心】：这里调用了恢复，但线程类里我之前失误把它漏了！
             self.execution_thread.resume()
+            
             self.start_btn.setEnabled(False)
             self.pause_btn.setText("⏸ 暂停执行")
             self.status_label.setText("执行进度: 任务已恢复")
-            
             self.set_runtime_settings_enabled(False)
 
     def update_all_settings(self):
@@ -739,7 +765,6 @@ class AutoClickerApp(QMainWindow):
             step.random_delay_min = self.random_delay_min_spin.value()
             step.random_delay_max = self.random_delay_max_spin.value()
             
-        # 【修复内存闪退核心】：提取所有的前端组件值，存入后台允许访问的纯变量中
         self.offset_enabled = self.offset_checkbox.isChecked()
         self.offset_x = self.offset_x_spin.value()
         self.offset_y = self.offset_y_spin.value()
@@ -767,6 +792,7 @@ class AutoClickerApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
+        
         self.last_stop_time = QDateTime.currentDateTime()
         self.status_label.setText("执行进度: 发生错误而停止")
         QMessageBox.critical(self, "错误", f"执行出错: {error_msg}")
@@ -1137,8 +1163,11 @@ class ExecutionThread(QThread):
         self.is_paused = True
         self.emergency_release()
 
+    # 【这就是导致之前闪退的罪魁祸首！由于上一版失误删除了这个方法，导致UI调用报错瞬间崩溃】
+    def resume(self):
+        self.is_paused = False
+
     def log(self, message, level="INFO"):
-        # 【修复跨线程闪退】不再读取前端 self.parent.log_checkbox，改为读取后台安全变量
         if getattr(self.parent, 'log_enabled', False):
             if level == "INFO":
                 self.parent.logger.info(message)
@@ -1240,6 +1269,8 @@ class ExecutionThread(QThread):
         iterations = int(seconds * 10)
         for _ in range(iterations):
             if self.is_stopped: break
+            while self.is_paused and not self.is_stopped:
+                time.sleep(0.1)
             time.sleep(0.1)
 
     def find_image(self, image_path, similarity=0.8):
@@ -1256,7 +1287,6 @@ class ExecutionThread(QThread):
             bbox = (left, top, right, bottom)
             screen_image = ImageGrab.grab(bbox)
         else:
-            # 【修复闪退】移除 QApplication 依赖，使用原生的 ImageGrab 获取全局屏幕图像
             screen_image = ImageGrab.grab()
 
         screenshot = cv2.cvtColor(np.array(screen_image), cv2.COLOR_RGB2GRAY)
@@ -1271,7 +1301,6 @@ class ExecutionThread(QThread):
 
     def click_target(self, target_pos, step):
         x, y = target_pos
-        # 【修复跨线程闪退】不再读取前端 self.parent.offset_checkbox
         if step.accept_offset and getattr(self.parent, 'offset_enabled', False):
             x += random.randint(-getattr(self.parent, 'offset_x', 5), getattr(self.parent, 'offset_x', 5))
             y += random.randint(-getattr(self.parent, 'offset_y', 5), getattr(self.parent, 'offset_y', 5))
