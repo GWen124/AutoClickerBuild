@@ -71,6 +71,12 @@ class AutoClickerApp(QMainWindow):
         self.is_selecting_window = False
         self.is_adding_image = False
         
+        # 【新增】防闪退：预加载安全的多线程传递变量
+        self.offset_enabled = False
+        self.offset_x = 5
+        self.offset_y = 5
+        self.log_enabled = False
+
         self.base_dir = self.get_base_path()
         self.screenshot_dir = os.path.join(self.base_dir, "screenshots")
         os.makedirs(self.screenshot_dir, exist_ok=True)
@@ -308,8 +314,10 @@ class AutoClickerApp(QMainWindow):
 
         debug_group = QGroupBox("调试与日志")
         debug_layout = QHBoxLayout()
-        self.log_checkbox = QCheckBox("📝 启用运行日志 (排查卡顿专用)")
+        self.log_checkbox = QCheckBox("📝 启用运行日志")
         self.log_checkbox.setChecked(False)
+        # 实时同步日志开关，防止跨线程读取闪退
+        self.log_checkbox.stateChanged.connect(lambda state: setattr(self, 'log_enabled', state == Qt.Checked))
         self.open_log_btn = QPushButton("📂 打开日志文件")
         self.open_log_btn.clicked.connect(self.open_log_file)
         debug_layout.addWidget(self.log_checkbox)
@@ -703,9 +711,18 @@ class AutoClickerApp(QMainWindow):
             self.set_runtime_settings_enabled(True)
             
         elif self.is_paused:
+            # 1. 把所有前台界面配置同步到底层安全变量
             self.update_all_settings()
             
-            self.execution_thread.loop_count = self.get_loop_count()
+            # 2. 抓取新的目标循环次数
+            new_loop_count = self.get_loop_count()
+            
+            # 【修复逻辑秒停问题】：如果中途把循环改为有限次数，并且已经跑过的轮数超过了这个目标次数
+            # 直接将当前跑的轮数清零。这样它就会老老实实再帮你跑 `new_loop_count` 次。
+            if new_loop_count != 999999 and self.execution_thread.current_loop >= new_loop_count:
+                self.execution_thread.current_loop = 0
+                
+            self.execution_thread.loop_count = new_loop_count
 
             self.is_paused = False
             self.is_running = True
@@ -721,6 +738,12 @@ class AutoClickerApp(QMainWindow):
             step.random_delay_enabled = self.random_delay_checkbox.isChecked()
             step.random_delay_min = self.random_delay_min_spin.value()
             step.random_delay_max = self.random_delay_max_spin.value()
+            
+        # 【修复内存闪退核心】：提取所有的前端组件值，存入后台允许访问的纯变量中
+        self.offset_enabled = self.offset_checkbox.isChecked()
+        self.offset_x = self.offset_x_spin.value()
+        self.offset_y = self.offset_y_spin.value()
+        self.log_enabled = self.log_checkbox.isChecked()
 
     def on_execution_finished(self):
         self.is_running = False
@@ -1085,7 +1108,6 @@ class ExecutionThread(QThread):
         self.is_paused = False
         self.current_loop = 0
         
-        # 记录最后一次点击的句柄和坐标，用于解锁防死锁
         self.last_hwnd = None
         self.last_pos = None
 
@@ -1096,13 +1118,11 @@ class ExecutionThread(QThread):
         self.is_stopped = False
         self.is_paused = False
 
-    # 【新增机制】紧急防锁死释放：无论是暂停还是停止，都强制发送一次按键抬起指令
     def emergency_release(self):
         if hasattr(self, 'last_hwnd') and self.last_hwnd and hasattr(self, 'last_pos') and self.last_pos:
             try:
                 x, y = self.last_pos
                 lparam = win32api.MAKELONG(int(x), int(y))
-                # 同时发送左键和右键的抬起指令，确保不会有任何按键状态残留在游戏内
                 win32gui.PostMessage(self.last_hwnd, win32con.WM_LBUTTONUP, 0, lparam)
                 win32gui.PostMessage(self.last_hwnd, win32con.WM_RBUTTONUP, 0, lparam)
                 self.log(f"🛑 触发防锁死机制：已向坐标 {self.last_pos} 强制发送按键释放指令", "WARNING")
@@ -1118,7 +1138,8 @@ class ExecutionThread(QThread):
         self.emergency_release()
 
     def log(self, message, level="INFO"):
-        if hasattr(self.parent, 'log_checkbox') and self.parent.log_checkbox.isChecked():
+        # 【修复跨线程闪退】不再读取前端 self.parent.log_checkbox，改为读取后台安全变量
+        if getattr(self.parent, 'log_enabled', False):
             if level == "INFO":
                 self.parent.logger.info(message)
             elif level == "DEBUG":
@@ -1235,17 +1256,10 @@ class ExecutionThread(QThread):
             bbox = (left, top, right, bottom)
             screen_image = ImageGrab.grab(bbox)
         else:
-            screen = QApplication.primaryScreen()
-            screen_image = screen.grabWindow(0).toImage()
+            # 【修复闪退】移除 QApplication 依赖，使用原生的 ImageGrab 获取全局屏幕图像
+            screen_image = ImageGrab.grab()
 
-        if isinstance(screen_image, QImage):
-            width, height = screen_image.width(), screen_image.height()
-            ptr = screen_image.bits()
-            ptr.setsize(height * width * 4)
-            arr = np.array(ptr).reshape(height, width, 4)
-            screenshot = cv2.cvtColor(arr, cv2.COLOR_BGRA2GRAY)
-        else:
-            screenshot = cv2.cvtColor(np.array(screen_image), cv2.COLOR_RGB2GRAY)
+        screenshot = cv2.cvtColor(np.array(screen_image), cv2.COLOR_RGB2GRAY)
 
         if screenshot.shape[0] < template.shape[0] or screenshot.shape[1] < template.shape[1]: return None
         result = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
@@ -1257,9 +1271,10 @@ class ExecutionThread(QThread):
 
     def click_target(self, target_pos, step):
         x, y = target_pos
-        if step.accept_offset and self.parent.offset_checkbox.isChecked():
-            x += random.randint(-self.parent.offset_x_spin.value(), self.parent.offset_x_spin.value())
-            y += random.randint(-self.parent.offset_y_spin.value(), self.parent.offset_y_spin.value())
+        # 【修复跨线程闪退】不再读取前端 self.parent.offset_checkbox
+        if step.accept_offset and getattr(self.parent, 'offset_enabled', False):
+            x += random.randint(-getattr(self.parent, 'offset_x', 5), getattr(self.parent, 'offset_x', 5))
+            y += random.randint(-getattr(self.parent, 'offset_y', 5), getattr(self.parent, 'offset_y', 5))
             self.log(f"应用坐标偏移，最终点击绝对坐标: ({x}, {y})", "DEBUG")
             
         if self.parent.target_hwnd:
@@ -1286,37 +1301,22 @@ class ExecutionThread(QThread):
                 time.sleep(0.05)
                 self.parent.mouse.click(Button.left)
 
-    # 【终极防卡核心】严密包裹的原子化点击序列
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         self.last_hwnd = hwnd
         self.last_pos = (x, y)
         
         try:
             lparam = win32api.MAKELONG(int(x), int(y))
-            
-            # 1. 鼠标移入该区域 (重置引擎悬停状态)
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
             time.sleep(0.05) 
-            
-            # 2. 发送按下
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-            
-            # 3. 模拟真实的按压时长，不可中断！ (防止引擎吃帧)
             time.sleep(0.08) 
-            
-            # 4. 发送抬起
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            
-            # 5. 抬起后停留一下，确保引擎完成 "Touch_End" 的冒泡计算
             time.sleep(0.05)
-            
-            # 6. 安全移开焦点，重置防连点屏蔽。(改用内部相对安全的20,20像素点)
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(20, 20))
-            
             self.log(f"PostMessage 发送完毕，状态完好释放", "DEBUG")
         except Exception as e:
             self.log(f"PostMessage 发送失败: {str(e)}", "ERROR")
-            # 发生意外代码崩溃时，执行紧急抬起
             self.emergency_release()
 
 if __name__ == "__main__":
