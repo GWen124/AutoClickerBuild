@@ -1084,6 +1084,10 @@ class ExecutionThread(QThread):
         self.is_stopped = False
         self.is_paused = False
         self.current_loop = 0
+        
+        # 记录最后一次点击的句柄和坐标，用于解锁防死锁
+        self.last_hwnd = None
+        self.last_pos = None
 
     def set_params(self, loop_count, start_index=0):
         self.loop_count = loop_count
@@ -1092,9 +1096,26 @@ class ExecutionThread(QThread):
         self.is_stopped = False
         self.is_paused = False
 
-    def stop(self): self.is_stopped = True
-    def pause(self): self.is_paused = True
-    def resume(self): self.is_paused = False
+    # 【新增机制】紧急防锁死释放：无论是暂停还是停止，都强制发送一次按键抬起指令
+    def emergency_release(self):
+        if hasattr(self, 'last_hwnd') and self.last_hwnd and hasattr(self, 'last_pos') and self.last_pos:
+            try:
+                x, y = self.last_pos
+                lparam = win32api.MAKELONG(int(x), int(y))
+                # 同时发送左键和右键的抬起指令，确保不会有任何按键状态残留在游戏内
+                win32gui.PostMessage(self.last_hwnd, win32con.WM_LBUTTONUP, 0, lparam)
+                win32gui.PostMessage(self.last_hwnd, win32con.WM_RBUTTONUP, 0, lparam)
+                self.log(f"🛑 触发防锁死机制：已向坐标 {self.last_pos} 强制发送按键释放指令", "WARNING")
+            except:
+                pass
+
+    def stop(self): 
+        self.is_stopped = True
+        self.emergency_release()
+
+    def pause(self): 
+        self.is_paused = True
+        self.emergency_release()
 
     def log(self, message, level="INFO"):
         if hasattr(self.parent, 'log_checkbox') and self.parent.log_checkbox.isChecked():
@@ -1104,6 +1125,8 @@ class ExecutionThread(QThread):
                 self.parent.logger.debug(message)
             elif level == "ERROR":
                 self.parent.logger.error(message)
+            elif level == "WARNING":
+                self.parent.logger.warning(message)
             print(f"[{level}] {message}")
 
     def run(self):
@@ -1182,7 +1205,6 @@ class ExecutionThread(QThread):
                     self.log(f"--- 第 {self.current_loop} 轮循环执行完毕 ---")
                     self.current_step_index = 0
                     
-                    # 【加固保护】：增加轮次切换间隔到 500ms
                     if self.current_loop < self.loop_count or self.loop_count == 999999:
                         self.log("进入下一轮前保护性休眠缓冲 500ms...", "DEBUG")
                         self._sleep_interruptible(0.5)
@@ -1264,32 +1286,38 @@ class ExecutionThread(QThread):
                 time.sleep(0.05)
                 self.parent.mouse.click(Button.left)
 
-    # 【终极防卡死重构】完美模拟人类真实点击流程
+    # 【终极防卡核心】严密包裹的原子化点击序列
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
+        self.last_hwnd = hwnd
+        self.last_pos = (x, y)
+        
         try:
             lparam = win32api.MAKELONG(int(x), int(y))
             
-            # 第一防线：先发一个抬起指令，防止上一步游戏引擎丢包导致假长按
-            win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            time.sleep(0.01)
-
-            # 第二防线：鼠标移动过去，且给引擎 50 毫秒的时间响应悬停状态
+            # 1. 鼠标移入该区域 (重置引擎悬停状态)
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
             time.sleep(0.05) 
             
-            # 正常点击（按、抬）
+            # 2. 发送按下
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-            time.sleep(0.05) 
+            
+            # 3. 模拟真实的按压时长，不可中断！ (防止引擎吃帧)
+            time.sleep(0.08) 
+            
+            # 4. 发送抬起
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
             
-            # 第三防线：【最重要】点击完成后，光速把虚拟鼠标“抽走”到边缘(1,1)
-            # 这样保证下一轮开始时，引擎能感受到“鼠标重新移入”的触发，彻底告别假死！
-            time.sleep(0.02)
-            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(1, 1))
+            # 5. 抬起后停留一下，确保引擎完成 "Touch_End" 的冒泡计算
+            time.sleep(0.05)
             
-            self.log(f"PostMessage 发送完毕 (已重置防卡死悬停点)", "DEBUG")
+            # 6. 安全移开焦点，重置防连点屏蔽。(改用内部相对安全的20,20像素点)
+            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(20, 20))
+            
+            self.log(f"PostMessage 发送完毕，状态完好释放", "DEBUG")
         except Exception as e:
             self.log(f"PostMessage 发送失败: {str(e)}", "ERROR")
+            # 发生意外代码崩溃时，执行紧急抬起
+            self.emergency_release()
 
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
