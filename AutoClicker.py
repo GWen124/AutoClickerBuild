@@ -18,21 +18,19 @@ from PyQt5.QtGui import *
 from pynput.mouse import Controller as MouseController, Listener as MouseListener, Button
 from pynput.keyboard import Controller as KeyboardController, Listener as KeyboardListener, Key
 
-# 【终极防闪退】：全局异常可视化拦截，软件绝不再悄无声息地消失
+# 【终极防闪退】：全局异常可视化拦截
 def global_exception_handler(exc_type, exc_value, exc_tb):
     try:
-        # 1. 写入本地崩溃日志
         with open("autoclicker_crash.txt", "w", encoding="utf-8") as f:
             f.write("=== AutoClicker 发生严重崩溃 ===\n")
             traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
         
-        # 2. 弹窗警告用户（不再静默秒退）
         app = QApplication.instance()
         if app:
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Critical)
             msg.setWindowTitle("致命错误拦截")
-            msg.setText(f"程序发生崩溃，但已被拦截！\n\n错误类型: {exc_type.__name__}\n错误详情: {exc_value}\n\n详细崩溃日志已保存至同目录下的 autoclicker_crash.txt")
+            msg.setText(f"程序发生崩溃，但已被拦截！\n\n错误类型: {exc_type.__name__}\n错误详情: {exc_value}\n\n详细崩溃日志已保存至同目录下")
             msg.exec_()
     except:
         pass
@@ -750,8 +748,6 @@ class AutoClickerApp(QMainWindow):
 
             self.is_paused = False
             self.is_running = True
-            
-            # 【修复致命核心】：这里调用了恢复，但线程类里我之前失误把它漏了！
             self.execution_thread.resume()
             
             self.start_btn.setEnabled(False)
@@ -1163,7 +1159,6 @@ class ExecutionThread(QThread):
         self.is_paused = True
         self.emergency_release()
 
-    # 【这就是导致之前闪退的罪魁祸首！由于上一版失误删除了这个方法，导致UI调用报错瞬间崩溃】
     def resume(self):
         self.is_paused = False
 
@@ -1265,13 +1260,21 @@ class ExecutionThread(QThread):
             self.log(f"发生崩溃级异常: {str(e)}", "ERROR")
             self.error.emit(str(e))
 
+    # 【核心：高精度时间倒计时重构】彻底消除操作系统时钟切片带来的时间漂移误差
     def _sleep_interruptible(self, seconds):
-        iterations = int(seconds * 10)
-        for _ in range(iterations):
-            if self.is_stopped: break
-            while self.is_paused and not self.is_stopped:
-                time.sleep(0.1)
-            time.sleep(0.1)
+        target_time = time.perf_counter() + seconds
+        while time.perf_counter() < target_time:
+            if self.is_stopped:
+                break
+                
+            if self.is_paused:
+                pause_start = time.perf_counter()
+                while self.is_paused and not self.is_stopped:
+                    time.sleep(0.1)
+                # 当恢复执行时，把这段暂停消耗的时间补偿回去，确保剩余倒计时依旧精准
+                target_time += (time.perf_counter() - pause_start)
+                
+            time.sleep(0.02) # 以极高频率（20ms）检查打断信号，且绝不拖慢系统
 
     def find_image(self, image_path, similarity=0.8):
         if not os.path.exists(image_path): return None
