@@ -116,6 +116,7 @@ class AutoClickerApp(QMainWindow):
 
         self.execution_start_time = None
         self.last_stop_time = None
+        self.last_periodic_trigger_time = None  # 【新增】周期任务起点基准时间
 
         self.execution_thread = ExecutionThread(self)
         self.execution_thread.finished.connect(self.on_execution_finished)
@@ -190,7 +191,6 @@ class AutoClickerApp(QMainWindow):
 
         self.stop_after_loop_cb = QCheckBox("⏳ 跑完本轮后自动停止")
         self.stop_after_loop_cb.setStyleSheet("color: #d35400; font-weight: bold; margin-top: 5px;")
-        # 【修复1】使用 toggled 高精度传递状态，并触发UI视觉反馈
         self.stop_after_loop_cb.toggled.connect(self.on_stop_after_loop_toggled)
 
         control_layout.addWidget(self.start_btn)
@@ -224,10 +224,13 @@ class AutoClickerApp(QMainWindow):
         timing_layout.addLayout(sched_stop_layout)
 
         periodic_start_layout = QHBoxLayout()
-        self.periodic_start_cb = QCheckBox("周期启动 (结束后分钟):")
+        # 【修改文案】更加明确是勾选后固定间隔触发
+        self.periodic_start_cb = QCheckBox("周期启动 (勾选后每隔分钟):")
         self.periodic_start_spin = QSpinBox()
         self.periodic_start_spin.setRange(1, 99999)
         self.periodic_start_spin.setValue(60)
+        # 【核心绑定】勾选状态变化时更新基准时间
+        self.periodic_start_cb.stateChanged.connect(self.on_periodic_cb_changed)
         periodic_start_layout.addWidget(self.periodic_start_cb)
         periodic_start_layout.addWidget(self.periodic_start_spin)
         timing_layout.addLayout(periodic_start_layout)
@@ -447,11 +450,16 @@ class AutoClickerApp(QMainWindow):
         main_layout.addWidget(main_splitter)
         self.setCentralWidget(main_widget)
 
-    # 【新增方法】：当勾选“跑完本轮停止”时，立刻传递给底层，并刷新界面文字反馈
+    # 【核心修正】：一旦勾选“周期启动”，立刻将当前时间作为固定周期的起始锚点
+    def on_periodic_cb_changed(self, state):
+        if state == Qt.Checked:
+            self.last_periodic_trigger_time = QDateTime.currentDateTime()
+        else:
+            self.last_periodic_trigger_time = None
+
     def on_stop_after_loop_toggled(self, checked):
         if hasattr(self, 'execution_thread'):
             self.execution_thread.stop_after_current = checked
-            # 立刻强制刷新一次 UI 的当前进度显示，挂上“沙漏”标志
             if self.is_running and not self.is_paused:
                 self.on_step_completed(self.current_step_index, self.execution_thread.current_loop)
 
@@ -477,11 +485,19 @@ class AutoClickerApp(QMainWindow):
                 self.stop_execution()
                 self.status_label.setText("执行进度: 因到达【定时关闭】时间而停止")
 
-        if self.periodic_start_cb.isChecked() and not self.is_running and self.last_stop_time:
-            elapsed_mins = self.last_stop_time.secsTo(now_dt) / 60.0
+        # 【核心重构】：固定周期的 Cron 调度逻辑，不再依赖上一轮结束的时间
+        if self.periodic_start_cb.isChecked() and self.last_periodic_trigger_time:
+            elapsed_mins = self.last_periodic_trigger_time.secsTo(now_dt) / 60.0
             if elapsed_mins >= self.periodic_start_spin.value():
-                self.last_stop_time = None  
-                self.start_execution()
+                # 触发后，严格把下一次计算锚点往后顺延 X 分钟，绝不会有几秒的误差累积
+                self.last_periodic_trigger_time = self.last_periodic_trigger_time.addSecs(self.periodic_start_spin.value() * 60)
+                
+                if not self.is_running:
+                    self.start_execution()
+                else:
+                    # 防冲突：如果时间到了但上一轮竟然还没执行完，丢弃本次触发，安全第一
+                    if hasattr(self, 'execution_thread'):
+                        self.execution_thread.log("周期启动时间已到，但当前任务仍在运行，自动跳过本次触发避免冲突！", "WARNING")
 
     def clear_target_window(self):
         self.target_hwnd = None
@@ -701,6 +717,9 @@ class AutoClickerApp(QMainWindow):
             QMessageBox.warning(self, "错误", "没有可执行的步骤")
             return
             
+        self.stop_after_loop_cb.setChecked(False)
+        self.execution_thread.stop_after_current = False
+            
         self.update_all_settings()
         self.execution_start_time = QDateTime.currentDateTime()
         self.last_stop_time = None
@@ -717,10 +736,7 @@ class AutoClickerApp(QMainWindow):
             self.is_paused = False
             loop_count = self.get_loop_count()
             self.execution_thread.set_params(loop_count, self.current_step_index)
-            
-            # 【修复2】：启动时读取最新的勾选状态，不再粗暴强制归零！
             self.execution_thread.stop_after_current = self.stop_after_loop_cb.isChecked()
-            
             self.execution_thread.start()
             self.status_label.setText("执行进度: 正在初始化...")
 
@@ -741,7 +757,6 @@ class AutoClickerApp(QMainWindow):
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
         
-        # 彻底停下后再取消勾选，保持状态干净
         self.stop_after_loop_cb.setChecked(False)
 
         self.last_stop_time = QDateTime.currentDateTime()
@@ -798,7 +813,6 @@ class AutoClickerApp(QMainWindow):
         self.pause_btn.setEnabled(False)
         self.pause_btn.setText("⏸ 暂停执行")
         
-        # 跑完后自动取消勾选
         self.stop_after_loop_cb.setChecked(False)
 
         self.last_stop_time = QDateTime.currentDateTime()
@@ -825,7 +839,6 @@ class AutoClickerApp(QMainWindow):
         self.current_step_index = step_index
         self.steps_table.selectRow(step_index)
         
-        # 【视觉增强】进度文字追加显示，肉眼可见状态
         status_text = f"执行进度: [第 {current_loop} 轮] 正在执行第 {step_index + 1} 步"
         if getattr(self.execution_thread, 'stop_after_current', False):
             status_text += "  ⏳(将在本轮结束后停止)"
