@@ -82,7 +82,6 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        # 版本号会通过您的 GitHub Actions 工作流自动递增替换
         self.setWindowTitle("AutoClicker V1.3")
         self.setMinimumSize(1000, 700)
         self.resize(1200, 800)
@@ -1295,7 +1294,6 @@ class ExecutionThread(QThread):
                         self.log("已触发【跑完本轮后停止】，安全结束任务。", "INFO")
                         break
                     
-                    # 绝对 0 延迟衔接下一轮，速度完全由您的列表控制
                     if self.current_loop < self.loop_count or self.loop_count == 999999:
                         pass
                         
@@ -1376,20 +1374,34 @@ class ExecutionThread(QThread):
                 time.sleep(0.05)
                 self.parent.mouse.click(Button.left)
 
+    # 【修复断触核心】：发送激活信号 + 0.1秒强力防吞帧悬停
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         self.last_hwnd = hwnd
         self.last_pos = (x, y)
         
         try:
             lparam = win32api.MAKELONG(int(x), int(y))
-            # 纯净模式，绝不乱移鼠标，保持按下 0.08 秒（约5帧）确保引擎接收
+            
+            # 1. 唤醒/激活窗口接收输入 (非常重要！防止后台切轮次时短暂休眠)
+            win32gui.SendMessage(hwnd, win32con.WM_ACTIVATE, win32con.WA_ACTIVE, 0)
+            
+            # 2. 鼠标就位 (Hover)
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-            time.sleep(0.03) 
+            
+            # 3. 【核心防吞帧】：等待 100毫秒（0.1秒）。
+            # 解释：切轮次时游戏极易掉帧。如果“移入”和“按下”在一瞬间(几毫秒)发给游戏，
+            # 引擎只渲染了一帧，会判定你没有移入动作，直接把按键当废包丢弃。
+            # 0.1秒不仅完全不影响效率，还能强行跨越掉帧区间，逼游戏引擎认下这个按键！
+            time.sleep(0.1) 
+            
+            # 4. 按下
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
             time.sleep(0.08) 
+            
+            # 5. 抬起
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            time.sleep(0.02)
-            self.log(f"后台点击指令发送完毕", "DEBUG")
+            
+            self.log(f"后台点击指令发送完毕 (带激活+防吞帧)", "DEBUG")
         except Exception as e:
             self.log(f"PostMessage 发送失败: {str(e)}", "ERROR")
             self.emergency_release()
