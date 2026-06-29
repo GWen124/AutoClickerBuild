@@ -18,7 +18,7 @@ from PyQt5.QtGui import *
 from pynput.mouse import Controller as MouseController, Listener as MouseListener, Button
 from pynput.keyboard import Controller as KeyboardController, Listener as KeyboardListener, Key
 
-# 【终极防闪退】：全局异常可视化拦截
+# 【全局异常可视化拦截】
 def global_exception_handler(exc_type, exc_value, exc_tb):
     try:
         with open("autoclicker_crash.txt", "w", encoding="utf-8") as f:
@@ -82,6 +82,7 @@ class AutoClickerApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        # 版本号会通过您的 GitHub Actions 工作流自动递增替换
         self.setWindowTitle("AutoClicker V1.3")
         self.setMinimumSize(1000, 700)
         self.resize(1200, 800)
@@ -1294,9 +1295,9 @@ class ExecutionThread(QThread):
                         self.log("已触发【跑完本轮后停止】，安全结束任务。", "INFO")
                         break
                     
+                    # 绝对 0 延迟衔接下一轮，速度完全由您的列表控制
                     if self.current_loop < self.loop_count or self.loop_count == 999999:
-                        self.log("进入下一轮前保护性休眠缓冲 500ms...", "DEBUG")
-                        self._sleep_interruptible(0.5)
+                        pass
                         
             self.log("=== 总任务全部完成 ===")
             self.finished.emit()
@@ -1381,13 +1382,14 @@ class ExecutionThread(QThread):
         
         try:
             lparam = win32api.MAKELONG(int(x), int(y))
-            # 回归纯净的原地点击：悬停 -> 按下 -> 抬起 (绝不随意挪走鼠标，防止引发底层引擎崩溃)
+            # 纯净模式，绝不乱移鼠标，保持按下 0.08 秒（约5帧）确保引擎接收
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-            time.sleep(0.05) 
+            time.sleep(0.03) 
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
             time.sleep(0.08) 
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            self.log(f"后台点击指令发送完毕 (纯净模式)", "DEBUG")
+            time.sleep(0.02)
+            self.log(f"后台点击指令发送完毕", "DEBUG")
         except Exception as e:
             self.log(f"PostMessage 发送失败: {str(e)}", "ERROR")
             self.emergency_release()
