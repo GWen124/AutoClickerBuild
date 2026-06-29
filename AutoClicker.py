@@ -116,7 +116,7 @@ class AutoClickerApp(QMainWindow):
 
         self.execution_start_time = None
         self.last_stop_time = None
-        self.last_periodic_trigger_time = None  # 【新增】周期任务起点基准时间
+        self.last_periodic_trigger_time = None 
 
         self.execution_thread = ExecutionThread(self)
         self.execution_thread.finished.connect(self.on_execution_finished)
@@ -224,12 +224,10 @@ class AutoClickerApp(QMainWindow):
         timing_layout.addLayout(sched_stop_layout)
 
         periodic_start_layout = QHBoxLayout()
-        # 【修改文案】更加明确是勾选后固定间隔触发
         self.periodic_start_cb = QCheckBox("周期启动 (勾选后每隔分钟):")
         self.periodic_start_spin = QSpinBox()
         self.periodic_start_spin.setRange(1, 99999)
         self.periodic_start_spin.setValue(60)
-        # 【核心绑定】勾选状态变化时更新基准时间
         self.periodic_start_cb.stateChanged.connect(self.on_periodic_cb_changed)
         periodic_start_layout.addWidget(self.periodic_start_cb)
         periodic_start_layout.addWidget(self.periodic_start_spin)
@@ -450,7 +448,6 @@ class AutoClickerApp(QMainWindow):
         main_layout.addWidget(main_splitter)
         self.setCentralWidget(main_widget)
 
-    # 【核心修正】：一旦勾选“周期启动”，立刻将当前时间作为固定周期的起始锚点
     def on_periodic_cb_changed(self, state):
         if state == Qt.Checked:
             self.last_periodic_trigger_time = QDateTime.currentDateTime()
@@ -485,17 +482,13 @@ class AutoClickerApp(QMainWindow):
                 self.stop_execution()
                 self.status_label.setText("执行进度: 因到达【定时关闭】时间而停止")
 
-        # 【核心重构】：固定周期的 Cron 调度逻辑，不再依赖上一轮结束的时间
         if self.periodic_start_cb.isChecked() and self.last_periodic_trigger_time:
             elapsed_mins = self.last_periodic_trigger_time.secsTo(now_dt) / 60.0
             if elapsed_mins >= self.periodic_start_spin.value():
-                # 触发后，严格把下一次计算锚点往后顺延 X 分钟，绝不会有几秒的误差累积
                 self.last_periodic_trigger_time = self.last_periodic_trigger_time.addSecs(self.periodic_start_spin.value() * 60)
-                
                 if not self.is_running:
                     self.start_execution()
                 else:
-                    # 防冲突：如果时间到了但上一轮竟然还没执行完，丢弃本次触发，安全第一
                     if hasattr(self, 'execution_thread'):
                         self.execution_thread.log("周期启动时间已到，但当前任务仍在运行，自动跳过本次触发避免冲突！", "WARNING")
 
@@ -1388,14 +1381,13 @@ class ExecutionThread(QThread):
         
         try:
             lparam = win32api.MAKELONG(int(x), int(y))
+            # 回归纯净的原地点击：悬停 -> 按下 -> 抬起 (绝不随意挪走鼠标，防止引发底层引擎崩溃)
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
             time.sleep(0.05) 
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
             time.sleep(0.08) 
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            time.sleep(0.05)
-            win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, win32api.MAKELONG(20, 20))
-            self.log(f"PostMessage 发送完毕，状态完好释放", "DEBUG")
+            self.log(f"后台点击指令发送完毕 (纯净模式)", "DEBUG")
         except Exception as e:
             self.log(f"PostMessage 发送失败: {str(e)}", "ERROR")
             self.emergency_release()
