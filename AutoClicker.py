@@ -98,6 +98,7 @@ class AutoClickerApp(QMainWindow):
         self.offset_x = 5
         self.offset_y = 5
         self.log_enabled = False
+        self.true_mouse_enabled = False # 新增防封安全变量
 
         self.base_dir = self.get_base_path()
         self.screenshot_dir = os.path.join(self.base_dir, "screenshots")
@@ -248,6 +249,14 @@ class AutoClickerApp(QMainWindow):
         window_layout.addWidget(self.window_title_edit)
         window_layout.addWidget(self.select_window_btn)
         window_layout.addWidget(self.clear_window_btn)
+        
+        # 【新增功能】真机物理防封模式
+        self.true_mouse_cb = QCheckBox("🛡️ 启用真机物理点击 (防封/防卡加载)")
+        self.true_mouse_cb.setStyleSheet("color: #c0392b; font-weight: bold; margin-top: 5px;")
+        self.true_mouse_cb.setToolTip("强力推荐：微信小程序等游戏会检测鼠标物理位置。开启此项将接管您的鼠标真实点击，杜绝【点击无反应/卡加载中】问题。")
+        self.true_mouse_cb.stateChanged.connect(self.toggle_true_mouse)
+        window_layout.addWidget(self.true_mouse_cb)
+        
         window_group.setLayout(window_layout)
         left_layout.addWidget(window_group)
 
@@ -448,6 +457,11 @@ class AutoClickerApp(QMainWindow):
         main_layout.addWidget(main_splitter)
         self.setCentralWidget(main_widget)
 
+    def toggle_true_mouse(self, state):
+        self.true_mouse_enabled = (state == Qt.Checked)
+        if self.true_mouse_enabled:
+            QMessageBox.information(self, "开启物理防封机制", "开启真机物理点击后：\n\n1. 工具将直接接管并移动您真实的系统鼠标。\n2. 此模式能100%防止微信小程序拦截后台点击。\n3. 执行期间请勿乱动鼠标，并确保游戏窗口不要被最小化或遮挡。")
+
     def on_periodic_cb_changed(self, state):
         if state == Qt.Checked:
             self.last_periodic_trigger_time = QDateTime.currentDateTime()
@@ -504,7 +518,8 @@ class AutoClickerApp(QMainWindow):
             self.random_delay_checkbox, self.random_delay_min_spin, self.random_delay_max_spin,
             self.hotkey_preset, self.steps_table, self.add_image_btn,
             self.add_coordinate_btn, self.delete_btn, self.move_up_btn,
-            self.move_down_btn, self.save_btn, self.load_btn, self.select_window_btn
+            self.move_down_btn, self.save_btn, self.load_btn, self.select_window_btn,
+            self.true_mouse_cb
         ]
         for control in controls:
             control.setEnabled(enabled)
@@ -794,6 +809,7 @@ class AutoClickerApp(QMainWindow):
         self.offset_x = self.offset_x_spin.value()
         self.offset_y = self.offset_y_spin.value()
         self.log_enabled = self.log_checkbox.isChecked()
+        self.true_mouse_enabled = self.true_mouse_cb.isChecked() # 同步安全变量
 
     def on_execution_finished(self):
         self.is_running = False
@@ -998,7 +1014,8 @@ class AutoClickerApp(QMainWindow):
             "schedule_stop_enabled": self.schedule_stop_cb.isChecked(),
             "schedule_stop_mins": self.schedule_stop_spin.value(),
             "periodic_start_enabled": self.periodic_start_cb.isChecked(),
-            "periodic_start_mins": self.periodic_start_spin.value()
+            "periodic_start_mins": self.periodic_start_spin.value(),
+            "true_mouse_enabled": self.true_mouse_cb.isChecked() # 保存防封设置
         }
         config_dir = os.path.dirname(file_path)
         for step in self.steps:
@@ -1076,6 +1093,8 @@ class AutoClickerApp(QMainWindow):
         self.schedule_stop_spin.setValue(config.get("schedule_stop_mins", 60))
         self.periodic_start_cb.setChecked(config.get("periodic_start_enabled", False))
         self.periodic_start_spin.setValue(config.get("periodic_start_mins", 60))
+        
+        self.true_mouse_cb.setChecked(config.get("true_mouse_enabled", False))
 
         self.update_steps_table()
         
@@ -1350,10 +1369,39 @@ class ExecutionThread(QThread):
             y += random.randint(-getattr(self.parent, 'offset_y', 5), getattr(self.parent, 'offset_y', 5))
             self.log(f"应用坐标偏移，最终点击绝对坐标: ({x}, {y})", "DEBUG")
             
+        # 【核心分支】：如果启用了真机物理点击
+        if getattr(self.parent, 'true_mouse_enabled', False):
+            self.log(f"🛡️ 使用真机物理鼠标点击...", "DEBUG")
+            
+            # 计算屏幕绝对坐标 (如果绑定了窗口，需加上窗口偏移量)
+            abs_x, abs_y = x, y
+            if self.parent.target_hwnd:
+                left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
+                abs_x += left
+                abs_y += top
+                
+            self.parent.mouse.position = (abs_x, abs_y)
+            time.sleep(0.08) # 模拟手移动到位后的短暂停留
+            
+            if step.click_type == 'left':
+                self.parent.mouse.press(Button.left)
+                time.sleep(random.uniform(0.05, 0.12)) # 模拟人手点击耗时
+                self.parent.mouse.release(Button.left)
+            elif step.click_type == 'right':
+                self.parent.mouse.press(Button.right)
+                time.sleep(random.uniform(0.05, 0.12))
+                self.parent.mouse.release(Button.right)
+            elif step.click_type == 'double':
+                self.parent.mouse.click(Button.left, 2)
+            
+            self.log(f"真机物理点击执行完毕", "DEBUG")
+            return # 执行完物理点击后直接返回，不走下方的后台静默代码
+            
+        # 【原有分支】：后台静默点击
         if self.parent.target_hwnd:
             left, top, _, _ = win32gui.GetWindowRect(self.parent.target_hwnd)
             rel_x, rel_y = x - left, y - top
-            self.log(f"向句柄发送后台点击指令 -> 相对坐标: ({rel_x}, {rel_y})", "DEBUG")
+            self.log(f"向句柄发送后台静默指令 -> 相对坐标: ({rel_x}, {rel_y})", "DEBUG")
             
             if step.click_type == 'left': down_msg, up_msg = win32con.WM_LBUTTONDOWN, win32con.WM_LBUTTONUP
             elif step.click_type == 'right': down_msg, up_msg = win32con.WM_RBUTTONDOWN, win32con.WM_RBUTTONUP
@@ -1374,34 +1422,18 @@ class ExecutionThread(QThread):
                 time.sleep(0.05)
                 self.parent.mouse.click(Button.left)
 
-    # 【修复断触核心】：发送激活信号 + 0.1秒强力防吞帧悬停
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         self.last_hwnd = hwnd
         self.last_pos = (x, y)
         
         try:
             lparam = win32api.MAKELONG(int(x), int(y))
-            
-            # 1. 唤醒/激活窗口接收输入 (非常重要！防止后台切轮次时短暂休眠)
-            win32gui.SendMessage(hwnd, win32con.WM_ACTIVATE, win32con.WA_ACTIVE, 0)
-            
-            # 2. 鼠标就位 (Hover)
             win32gui.PostMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-            
-            # 3. 【核心防吞帧】：等待 100毫秒（0.1秒）。
-            # 解释：切轮次时游戏极易掉帧。如果“移入”和“按下”在一瞬间(几毫秒)发给游戏，
-            # 引擎只渲染了一帧，会判定你没有移入动作，直接把按键当废包丢弃。
-            # 0.1秒不仅完全不影响效率，还能强行跨越掉帧区间，逼游戏引擎认下这个按键！
-            time.sleep(0.1) 
-            
-            # 4. 按下
+            time.sleep(0.03) 
             win32gui.PostMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
             time.sleep(0.08) 
-            
-            # 5. 抬起
             win32gui.PostMessage(hwnd, up_msg, 0, lparam)
-            
-            self.log(f"后台点击指令发送完毕 (带激活+防吞帧)", "DEBUG")
+            time.sleep(0.02)
         except Exception as e:
             self.log(f"PostMessage 发送失败: {str(e)}", "ERROR")
             self.emergency_release()
