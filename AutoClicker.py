@@ -18,7 +18,7 @@ from PyQt5.QtGui import *
 from pynput.mouse import Controller as MouseController, Listener as MouseListener, Button
 from pynput.keyboard import Controller as KeyboardController, Listener as KeyboardListener, Key
 
-# 【全局异常可视化拦截】防止软件无报错秒退
+# 【全局异常可视化拦截】
 def global_exception_handler(exc_type, exc_value, exc_tb):
     try:
         with open("autoclicker_crash.txt", "w", encoding="utf-8") as f:
@@ -1294,8 +1294,9 @@ class ExecutionThread(QThread):
                         self.log("已触发【跑完本轮后停止】，安全结束任务。", "INFO")
                         break
                     
+                    # 轮次间极速无缝切换
                     if self.current_loop < self.loop_count or self.loop_count == 999999:
-                        pass
+                        pass 
                         
             self.log("=== 总任务全部完成 ===")
             self.finished.emit()
@@ -1374,7 +1375,6 @@ class ExecutionThread(QThread):
                 time.sleep(0.05)
                 self.parent.mouse.click(Button.left)
 
-    # 【终极核心】：回归 SendMessage + 补齐 MOUSEMOVE 悬停防漏点
     def click_target_backend(self, hwnd, x, y, down_msg, up_msg):
         self.last_hwnd = hwnd
         self.last_pos = (x, y)
@@ -1382,22 +1382,16 @@ class ExecutionThread(QThread):
         try:
             lparam = win32api.MAKELONG(int(x), int(y))
             
-            # 1. 模拟鼠标移入（解决第二轮第一步漏点的核心）
-            # 必须用 SendMessage，强制游戏引擎立刻处理 Hover 状态
-            win32gui.SendMessage(hwnd, win32con.WM_MOUSEMOVE, 0, lparam)
-            time.sleep(0.05) 
-            
-            # 2. 发送按下
-            # 使用 SendMessage 产生阻塞背压，防止消息队列拥堵导致游戏“卡加载”
+            # 【破案修复区】：老版本之所以会吞抬起，是因为只等了 0.01 秒！
+            # 延长到 0.08 秒（约 5 帧时间），100% 保证游戏引擎收到完整的按键动作
             win32gui.SendMessage(hwnd, down_msg, win32con.MK_LBUTTON, lparam)
-            time.sleep(0.05) 
-            
-            # 3. 发送抬起
+            time.sleep(0.08) 
             win32gui.SendMessage(hwnd, up_msg, 0, lparam)
             
-            self.log(f"SendMessage 后台指令发送完毕", "DEBUG")
+            self.log(f"后台点击指令发送完毕: ({x}, {y})", "DEBUG")
         except Exception as e:
             self.log(f"SendMessage 发送失败: {str(e)}", "ERROR")
+            self.emergency_release()
 
 if __name__ == "__main__":
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
